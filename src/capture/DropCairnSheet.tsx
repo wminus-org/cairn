@@ -49,6 +49,7 @@ import {
 import HoldToRecord, { type RecordingResult } from './HoldToRecord';
 import {
   createCairn,
+  requestTranscription,
   isCairnApiError,
   newStoneId,
   stackStone,
@@ -335,6 +336,15 @@ export function DropCairnSheet({
         // The glyph on the map is sized by the server's stone_count. Now that
         // the row exists, ask for the new number.
         onDropped(cairnId);
+
+        // Transcribe straight away rather than waiting for someone to open the
+        // thread. Deliberately NOT awaited: the drop is already complete and
+        // reconciled above, so a slow or failed Scribe call must not hold the
+        // sheet open or turn a successful drop into a visible failure.
+        // `requestTranscription` is written never to reject, and the thread
+        // screen still fetches on open for anything that slipped through — so
+        // this is a head start, not the only path.
+        void requestTranscription(cairnId, stone.id, coordsRef.current);
       } catch (err) {
         if (!alive.current) return;
         patchStone(stone.id, { status: 'failed', failure: describeFailure(err) });
