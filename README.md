@@ -8,7 +8,7 @@ storage and the proximity gate. Mapbox for the map.
 
 The spec is [`tracker/PLAN.md`](tracker/PLAN.md) and it wins every argument.
 The board is [`tracker/BOARD.md`](tracker/BOARD.md).
-
+ja
 ---
 
 ## Read this before you run anything
