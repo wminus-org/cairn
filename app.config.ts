@@ -18,6 +18,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name: IS_DEV ? 'Cairn (dev)' : 'Cairn',
   slug: 'cairn',
+  // The EAS project lives under the wminus org; pin the account so the CLI
+  // resolves this to expo.dev/accounts/wminus/projects/cairn rather than a
+  // personal one. Paired with extra.eas.projectId below.
+  owner: 'wminus',
   scheme: 'cairn',
   version: '1.0.0',
   orientation: 'portrait',
@@ -99,6 +103,18 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     // so a missing value can be reported at boot instead of at first map mount.
     mapboxAccessToken: process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN,
     supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL,
+
+    // Links this build to expo.dev/accounts/wminus/projects/cairn for EAS
+    // Build / Update / Submit. Owner is pinned above.
+    eas: {
+      projectId: 'fb779450-695b-41c6-bb39-b79bcba0464b',
+    },
+  },
+  updates: {
+    url: 'https://u.expo.dev/fb779450-695b-41c6-bb39-b79bcba0464b',
+  },
+  runtimeVersion: {
+    policy: 'appVersion',
   },
 
   experiments: {
