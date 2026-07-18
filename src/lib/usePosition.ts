@@ -319,7 +319,7 @@ export interface PositionOverrideInput extends PositionCoords {
  *     override to publish, so the route still advances with location switched
  *     off in Settings — which is the failure this exists to survive.
  *
- * The one thing left for CRN-025: `@rnmapbox/maps` draws its user puck from the
+ * The one thing left for CRN-025: `react-native-maps` draws its user puck from the
  * native SDK's own provider, which knows nothing about this. In override mode,
  * turn off native user-location and follow, and drive the camera and marker from
  * `usePosition()` — otherwise there are two dots on the mirrored screen.
@@ -366,7 +366,7 @@ export async function refreshPermission(): Promise<PositionStatus> {
 
 /**
  * The single lat/lng → Mapbox boundary. `expo-location` reports
- * `{ latitude, longitude }`; `@rnmapbox/maps` wants `[longitude, latitude]`.
+ * `{ latitude, longitude }`; `react-native-maps` wants `[longitude, latitude]`.
  * Flip here and never again — a flipped pair puts a cairn in the Indian Ocean
  * and looks like a data bug for twenty minutes.
  */

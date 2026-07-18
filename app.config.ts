@@ -60,23 +60,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   // and add the plugin here by hand.
   plugins: [
     'expo-router',
-    'expo-dev-client',
     'expo-asset',
-
-    [
-      '@rnmapbox/maps',
-      {
-        // Build-time credential (sk.*, scope DOWNLOADS:READ). CocoaPods uses it
-        // to pull the Mapbox native SDK from Mapbox's private registry.
-        // Undefined when unset, which the plugin treats as "not provided" —
-        // prebuild still runs, but `pod install` will 401.
-        //
-        // NOTE: as of @rnmapbox/maps v10 this option is deprecated in favour of
-        // the RNMAPBOX_MAPS_DOWNLOAD_TOKEN environment variable. Either works.
-        // If you set both, expect a deprecation warning during prebuild.
-        RNMapboxMapsDownloadToken: process.env.MAPBOX_DOWNLOAD_TOKEN,
-      },
-    ],
 
     [
       'expo-location',
