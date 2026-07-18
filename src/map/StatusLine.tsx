@@ -87,11 +87,14 @@ const styles = StyleSheet.create({
     backgroundColor: colors.t40,
   },
   text: {
-    ...type.mono,
+    // `type.small`, not `type.mono`. Mono here carries `textTransform:
+    // 'uppercase'` and 1.1 letterspacing, which is right for a timestamp or a
+    // distance and wrong for a sentence — "LOCATION IS OFF. CAIRN ONLY WORKS
+    // WHERE YOU ARE STANDING." is genuinely hard to read, and this is being
+    // projected onto a wall while someone walks. design-system.md reserves mono
+    // for timestamps, distances, stone counts, join codes and author names.
+    ...type.small,
     color: colors.contour,
     flexShrink: 1,
-    // 62 characters at 11pt mono is roughly the whole gutter-to-gutter width;
-    // the longest state ("Location is off…") wraps to two lines and that is
-    // the intended shape, not an overflow.
   },
 });
