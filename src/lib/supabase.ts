@@ -212,11 +212,24 @@ export async function uploadToBucket(
     throw new Error(`Read 0 bytes from ${localUri}; refusing to upload an empty object.`);
   }
 
+  // upsert: false, deliberately. `upsert: true` sends `x-upsert: true`, and
+  // storage-api's upsert path fails the RLS check even when the plain insert
+  // passes — verified against the live project: same key, same session, insert
+  // 200 / upsert 403 "new row violates row-level security policy". That was the
+  // bug where every voice note died and text notes worked, because text never
+  // uploads.
+  //
+  // Losing upsert costs nothing here. The key is {cairn_id}/{stone_id}, the
+  // stone id is minted before the upload and reused on retry, so a collision
+  // means this exact file already landed. Treat it as success rather than
+  // failing a drop that in fact succeeded.
   const { data, error } = await getSupabase()
     .storage.from(bucket)
-    .upload(key, body, { contentType, upsert: true });
+    .upload(key, body, { contentType, upsert: false });
 
   if (error) {
+    const message = String((error as { message?: string }).message ?? error);
+    if (/already exists|Duplicate|resource already/i.test(message)) return key;
     // `Network request failed` here is usually a misspelled bucket or a
     // missing session, not the network.
     throw error;
