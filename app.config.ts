@@ -49,9 +49,24 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     },
   },
 
-  // Android is explicitly out of scope for this build — see tracker/README.md.
-  // No android block, and `expo prebuild --platform ios` is the only prebuild
-  // anyone should run.
+  // Android is out of scope for the DEMO — see tracker/README.md — but declared
+  // so a teammate on an Android phone can open it in Expo Go and look around.
+  // Expo Go supplies its own permissions and its own Google Maps key, so these
+  // strings only matter if someone later makes a standalone Android build.
+  // Nothing here changes the iOS path.
+  android: {
+    package: 'dev.nejc.cairn',
+    adaptiveIcon: {
+      foregroundImage: './assets/android-icon-foreground.png',
+      backgroundColor: '#0F1E17',
+    },
+    permissions: [
+      'ACCESS_COARSE_LOCATION',
+      'ACCESS_FINE_LOCATION',
+      'RECORD_AUDIO',
+      'CAMERA',
+    ],
+  },
 
   // NOTE: this array is the single source of truth for plugins. `expo install`
   // wants to write a plugin entry into app.json, which it will silently create
