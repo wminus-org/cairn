@@ -38,6 +38,20 @@ function require_(key: EnvKey): string {
 }
 
 /**
+ * Optional (CRN-006): a PUBLISHED Mapbox Studio style URL, of the form
+ * `mapbox://styles/<user>/<styleid>`. Not a secret — a style URL is public,
+ * unlike the sk.* download token.
+ *
+ * Deliberately NOT part of `raw`, and therefore never reported by
+ * `missingEnv()`: absence is the normal case. When unset, src/map/cairnStyle.ts
+ * serves its built-in contour style JSON, so the map works with no Studio
+ * setup at all.
+ */
+export function mapboxStyleUrl(): string | undefined {
+  return process.env.EXPO_PUBLIC_MAPBOX_STYLE_URL || undefined;
+}
+
+/**
  * Accessors, not constants — they throw at first use rather than at import,
  * so a missing .env shows a readable screen instead of a boot redbox.
  */

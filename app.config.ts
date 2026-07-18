@@ -24,8 +24,11 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   icon: './assets/icon.png',
   userInterfaceStyle: 'dark',
   backgroundColor: '#0F1E17',
-  newArchEnabled: true,
   assetBundlePatterns: ['**/*'],
+  // NOTE: there is no `newArchEnabled` here and there cannot be. Expo SDK 57
+  // dropped the option — the New Architecture is the only architecture, and
+  // @expo/config-types no longer declares the field. If the map mounts black,
+  // it is not an architecture flag; check the pk.* token and the style URL.
 
   ios: {
     bundleIdentifier: 'dev.nejc.cairn',
@@ -49,9 +52,16 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   // No android block, and `expo prebuild --platform ios` is the only prebuild
   // anyone should run.
 
+  // NOTE: this array is the single source of truth for plugins. `expo install`
+  // wants to write a plugin entry into app.json, which it will silently create
+  // alongside this file — and because this config spreads `...config` and then
+  // replaces `plugins` wholesale, that entry would be dropped. If you add a
+  // package that ships a config plugin, delete the app.json it leaves behind
+  // and add the plugin here by hand.
   plugins: [
     'expo-router',
     'expo-dev-client',
+    'expo-asset',
 
     [
       '@rnmapbox/maps',

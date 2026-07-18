@@ -1,3 +1,5 @@
+import type { TextStyle } from 'react-native';
+
 /**
  * Cairn design tokens.
  *
@@ -23,37 +25,97 @@ export const palette = {
  */
 export const colors = {
   background: palette.base,
-  text: palette.bone,
-  textMuted: 'rgba(232, 227, 216, 0.60)',
-  textFaint: 'rgba(232, 227, 216, 0.35)',
   contour: palette.bone,
   accent: palette.amber,
   unresolved: palette.terracotta,
+
+  /**
+   * The opacity ladder — bone at alpha. These six values are the whole
+   * secondary palette. Any other alpha is a bug: pick the nearest rung.
+   */
+  t100: palette.bone,
+  /** Body support, settled waveform stones, empty-state copy, Space wordmark. */
+  t60: 'rgba(232, 227, 216, 0.60)',
+  /** Metadata — author names, timestamps, distances, unplayed waveform. */
+  t40: 'rgba(232, 227, 216, 0.40)',
+  /** Map contour lines, skeleton loaders. */
+  t20: 'rgba(232, 227, 216, 0.20)',
+  /** Hairlines, dividers, card borders. */
+  t12: 'rgba(232, 227, 216, 0.12)',
+  /** Elevated surface fill over base (sheets, cards). No shadows — this is it. */
+  t06: 'rgba(232, 227, 216, 0.06)',
+
+  // Semantic aliases onto the ladder. Reach for these in type styles.
+  text: palette.bone,
+  textMuted: 'rgba(232, 227, 216, 0.60)',
+  textFaint: 'rgba(232, 227, 216, 0.40)',
   hairline: 'rgba(232, 227, 216, 0.12)',
+  surface: 'rgba(232, 227, 216, 0.06)',
 } as const;
 
 /**
  * Never more than two type sizes on a screen. Timestamps and distances are
  * mono at 11 with letterspacing — that is the only place mono appears.
  */
-export const type = {
-  title: { fontSize: 22, lineHeight: 22 * 1.6 },
-  body: { fontSize: 16, lineHeight: 16 * 1.6 },
+export const type: Record<'display' | 'body' | 'small' | 'mono', TextStyle> = {
+  /** Screen title. One per screen. */
+  display: { fontSize: 28, lineHeight: 45, fontWeight: '500' },
+  body: { fontSize: 17, lineHeight: 27 },
+  /** Secondary lines inside a card. */
+  small: { fontSize: 13, lineHeight: 21 },
+  /**
+   * Timestamps, distances, stone counts, join codes, author names. Nothing
+   * else. Uppercase is baked in — callers pass their string as-is and never
+   * hand-uppercase it. 40% opacity unless it is a join code (100%) or a
+   * `HERE` label (amber, 100%).
+   */
   mono: {
     fontSize: 11,
-    lineHeight: 11 * 1.6,
+    lineHeight: 18,
     letterSpacing: 1.1,
-    fontVariant: ['tabular-nums'] as const,
+    textTransform: 'uppercase',
+    fontVariant: ['tabular-nums'],
+  },
+};
+
+/**
+ * Layout. The vertical rhythm unit is 8pt and all vertical spacing is a
+ * multiple of it — there is deliberately no 4pt step. Corner radius has
+ * exactly three values; no others.
+ */
+export const s = {
+  /** Screen horizontal gutter. */
+  gutter: 24,
+  /** Card / sheet padding. */
+  pad: 20,
+  /** Vertical rhythm unit. Multiply it; do not subdivide it. */
+  unit: 8,
+  /** Gap between stones in a thread. */
+  thread: 24,
+  /** Minimum tap target, 44 x 44. */
+  tap: 44,
+  /** Max text measure, in characters. */
+  measure: 62,
+  r: {
+    /** Waveform stones. */
+    stone: 2,
+    /** Chips, buttons, thumbnails. */
+    chip: 8,
+    /** Bottom sheets, full cards. */
+    sheet: 16,
   },
 } as const;
 
-/** Generous margins. One scale, used everywhere. */
+/**
+ * @deprecated Legacy alias for `s`. Multiples of the 8pt unit only — the 4pt
+ * step is gone. Prefer `s.gutter` / `s.pad` / `s.unit` and the `s.r` radii,
+ * which say what the number is for instead of how big it is.
+ */
 export const space = {
-  xs: 4,
-  sm: 8,
-  md: 16,
-  lg: 24,
-  xl: 40,
+  sm: s.unit,
+  md: s.unit * 2,
+  lg: s.gutter,
+  xl: s.unit * 5,
 } as const;
 
 /**
