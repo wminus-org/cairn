@@ -33,6 +33,7 @@ import {
   type CairnDetail,
   type CairnStone,
 } from '../../src/lib/cairnApi';
+import { isDemoMode, subscribeDemoMode } from '../../src/lib/demoMode';
 import { usePosition, type PositionCoords } from '../../src/lib/usePosition';
 import CairnGlyph from '../../src/thread/CairnGlyph';
 import StoneRow, { type StoneDegrade, type StonePlayback } from '../../src/thread/StoneRow';
@@ -119,7 +120,19 @@ export default function CairnThreadScreen() {
       lastFetch.current = { at, time: Date.now() };
 
       try {
-        const next = await fetchCairnDetail(cairnId, at);
+        let next = await fetchCairnDetail(cairnId, at);
+
+        // Demo mode (CRN-025). The server decides the band from the position it
+        // is given, so to unlock from anywhere we ask again AS IF standing on
+        // the cairn. `cairn_detail` returns lat/lng at every band, including
+        // 'far', so the first call tells us where to claim to be — no extra
+        // route params, no second endpoint, and the gate itself is untouched.
+        // A wrong cairn id still returns nothing; this simulates a location,
+        // it does not bypass a check.
+        if (next && isDemoMode() && next.band !== 'unlocked') {
+          next = await fetchCairnDetail(cairnId, { latitude: next.lat, longitude: next.lng });
+        }
+
         if (!next) {
           // Not an error. The cairn does not exist, or it belongs to a Space
           // this account is not in, and the server refuses to say which —
@@ -166,6 +179,19 @@ export default function CairnThreadScreen() {
     const stale = !unlockedRef.current && elapsed >= IDLE_REFETCH_MS;
     if (moved || stale) void load(at);
   }, [load]);
+
+  // Toggling demo mode changes what the server will say without the user
+  // having moved, which is precisely what the throttle suppresses. Clear it and
+  // refetch so the thread unlocks (or re-locks) immediately.
+  useEffect(
+    () =>
+      subscribeDemoMode(() => {
+        lastFetch.current = null;
+        const at = coordsRef.current;
+        if (at) void load(at);
+      }),
+    [load],
+  );
 
   // First fix opens the thread; later fixes walk it toward unlocked.
   useEffect(() => {

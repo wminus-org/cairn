@@ -20,7 +20,7 @@
  */
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 import MapView, { Marker, type Region } from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -39,6 +39,7 @@ import CairnMarkerBody, {
 import DropButton from '../src/map/DropButton';
 import MapScrim from '../src/map/MapScrim';
 import StatusLine from '../src/map/StatusLine';
+import { isDemoMode, subscribeDemoMode, toggleDemoMode } from '../src/lib/demoMode';
 import { colors } from '../src/theme';
 
 /** Technology Park, Ljubljana. Where the demo route lives. */
@@ -173,11 +174,24 @@ export default function MapScreen() {
     null,
   );
   const [dropTooFar, setDropTooFar] = useState(false);
+  /** Mirrors the demoMode module so the label re-renders when it flips. */
+  const [demoOn, setDemoOn] = useState(isDemoMode());
 
   /** Where we last ran the nearby query, so we can throttle by distance. */
   const lastFetchAt = useRef<{ latitude: number; longitude: number } | null>(null);
   const mapRef = useRef<MapView>(null);
   const hasFramedUser = useRef(false);
+
+  /**
+   * Force a reload, ignoring the movement throttle. Toggling demo mode changes
+   * what the server will say without the user having moved a step, which is
+   * exactly the case the throttle is designed to suppress.
+   */
+  const refetchNow = useCallback(async () => {
+    if (!coords) return;
+    lastFetchAt.current = null;
+    await load({ latitude: coords.latitude, longitude: coords.longitude });
+  }, [coords]);
 
   const load = useCallback(async (at: { latitude: number; longitude: number }) => {
     setLoading(true);
@@ -304,7 +318,24 @@ export default function MapScreen() {
       <MapScrim />
 
       <SafeAreaView style={styles.overlay} pointerEvents="box-none">
-        <StatusLine text={statusLine} busy={loading} />
+        {/* Long-press the status line to toggle demo mode (CRN-025). Hidden
+            rather than a button because it must never be pressed by accident on
+            stage, and never explained to the room. The label is unmissable when
+            it is on: walking on stage with it silently enabled, and telling a
+            judge the lock is real, is the one way this feature does damage. */}
+        <Pressable
+          onLongPress={() => {
+            const on = toggleDemoMode();
+            setDemoOn(on);
+            void refetchNow();
+          }}
+          delayLongPress={800}
+        >
+          <StatusLine
+            text={demoOn ? `DEMO MODE · ${statusLine}` : statusLine}
+            busy={loading}
+          />
+        </Pressable>
 
         <View style={styles.spacer} pointerEvents="none" />
 
