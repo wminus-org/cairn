@@ -69,6 +69,13 @@ A field journal, not a social app. Five colours, square corners, no shadows, no 
 
 Type is Instrument Serif (display) over Space Mono (labels, distances, timestamps). Full spec in [`tracker/reference/design-system.md`](tracker/reference/design-system.md).
 
+<div align="center">
+<br />
+<img src="assets/design-sheet.png" width="360" alt="Cairn design sheet" />
+<br />
+<sub><i>Our design mark — the whole system on one sheet.</i></sub>
+</div>
+
 ---
 
 ## Tech
