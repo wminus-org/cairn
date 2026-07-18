@@ -1,154 +1,112 @@
-# CAIRN
+<div align="center">
 
-**Notes left at places, for whoever stands there next.**
+<img src="assets/icon.png" width="128" alt="Cairn" />
 
-Location-pinned voice and photo notes, unlocked by physically standing where
-they were left. Expo / React Native, iOS-first. Supabase for data, auth,
-storage and the proximity gate. Mapbox for the map.
+# Cairn
 
-The spec is [`tracker/PLAN.md`](tracker/PLAN.md) and it wins every argument.
-The board is [`tracker/BOARD.md`](tracker/BOARD.md).
-ja
----
+### Leave a note where it happened — heard only by whoever stands there next.
 
-## Read this before you run anything
+Voice and photo notes pinned to a place. From across the square a cairn is just a shape and a distance. Walk up to it and it opens: someone's voice, right where they left it.
 
-> ### 1. Expo Go will not work. Not with a flag. Not with a workaround.
->
-> `@rnmapbox/maps` ships native code. It cannot be loaded by Expo Go, ever.
-> This project **must** be prebuilt into a custom dev client and run on a
-> physical device:
->
-> ```
-> npx expo prebuild --platform ios --clean
-> npx expo run:ios --device
-> ```
->
-> If you scan the QR code with Expo Go you will get a module-not-found error
-> and you will lose ten minutes deciding it is your fault. It isn't.
+<br />
 
-> ### 2. You need TWO Mapbox tokens, and they are not interchangeable.
->
-> | Token | Prefix | Scope | When it is used |
-> |---|---|---|---|
-> | **Public access token** | `pk.` | default | **Runtime.** Passed to `Mapbox.setAccessToken()` at app boot. Goes in `EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN`. |
-> | **Secret download token** | `sk.` | must include `DOWNLOADS:READ` | **Build time.** CocoaPods uses it to fetch the Mapbox native SDK. Goes in `MAPBOX_DOWNLOAD_TOKEN`. |
->
-> Create both at [account.mapbox.com/access-tokens](https://account.mapbox.com/access-tokens/)
-> **now**. The secret token is displayed **exactly once** — paste it into `.env`
-> before you close the tab.
->
-> A `401 Unauthorized` during `pod install` means the `sk.` token is missing,
-> mistyped, or lacks `DOWNLOADS:READ`. It is never a network problem, and
-> re-running the command does not help.
+![Expo SDK 54](https://img.shields.io/badge/Expo_SDK_54-000020?style=for-the-badge&logo=expo&logoColor=white)
+![React Native](https://img.shields.io/badge/React_Native-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
+![Supabase](https://img.shields.io/badge/Supabase-3FCF8E?style=for-the-badge&logo=supabase&logoColor=white)
+![iOS](https://img.shields.io/badge/iOS-000000?style=for-the-badge&logo=apple&logoColor=white)
 
-> ### 3. A physical iPhone, not the simulator.
->
-> The entire product is distance from a coordinate. The simulator has no useful
-> GPS. `--device` needs an Apple developer team on the target and a trusted
-> profile on the phone; a free personal team works and the build expires in
-> seven days, which is fine. Do the codesigning dance early, not at 13:00.
+<br />
+
+[![▶  Read the Plan](https://img.shields.io/badge/▶__Read_the_Plan-FF5A1F?style=for-the-badge&logoColor=white)](tracker/PLAN.md)
+[![Demo Script](https://img.shields.io/badge/Demo_Script-0C2528?style=for-the-badge)](tracker/DEMO.md)
+[![Design System](https://img.shields.io/badge/Design_System-0C2528?style=for-the-badge)](tracker/reference/design-system.md)
+
+</div>
 
 ---
 
-## Setup, in order
+## The idea
+
+Every company with people in the field has institutional memory that only exists as photos in a group chat — construction handovers, facilities, field service, property inspections. Cairn attaches it to the **location** instead, and it unlocks when you're standing there.
+
+> **"This is a cairn. Someone left a voice here.**
+> From over there it was a shape and a number — that's all the app will give you.
+> Standing on it, it opens."**
+
+No feed. No timeline. The map is the memory, and distance is the key.
+
+---
+
+## How the distance mechanic works
+
+The gate is enforced **server-side** — the client sends where it is, the server decides what comes back. There is no "locked but downloaded" state to bypass.
+
+| Band | Distance | What you get |
+|:--|:--|:--|
+| 🗿 **Far** | `> 200 m` | A glyph and a number. Nothing else. |
+| 🌫️ **Approach** | `30–200 m` | A blurred waveform that **sharpens as you walk in** — no audio, no image, no text on the wire yet. |
+| 🔦 **Here** | `< 30 m` | Full resolution. The newest voice note autoplays. Photos reveal their pins. |
+
+Radius is per-cairn (`radius_m`), read live from the server — never hardcoded.
+
+---
+
+## What's inside
+
+- **🎙️ Stacked-stone waveform** — hold to speak; each syllable drops a stone onto a growing amber stack. The one piece of motion people remember.
+- **📍 Photo pins with a torch reveal** — tap a point on a photo and the image lights up around that spot while a technician's voice explains it. Unresolved issues glow terracotta.
+- **🧵 The thread** — a cairn is a conversation held at a coordinate over months. Newest stone on top, oldest at the bottom.
+- **✨ Brief me** — one press synthesises the whole thread into ~25 seconds of spoken summary. Hands-free, standing at the thing, with a drill in the other hand.
+- **🗺️ Living map** — contour dots that grow with a cairn's history; a heat map when you zoom out.
+- **👥 Projects (Spaces)** — team cairns, invisible to non-members. Not locked — *invisible*.
+
+---
+
+## Design language
+
+A field journal, not a social app. Five colours, square corners, no shadows, no icon set beyond the cairn stack. Amber (`#FF5A1F`) means exactly one thing — *you are here and this is open to you* — and is spent nowhere else.
+
+Type is Instrument Serif (display) over Space Mono (labels, distances, timestamps). Full spec in [`tracker/reference/design-system.md`](tracker/reference/design-system.md).
+
+---
+
+## Tech
+
+| Layer | Choice |
+|:--|:--|
+| App | Expo SDK 54 · React Native · expo-router · TypeScript |
+| Map | Apple Maps via `react-native-maps` — runs in **Expo Go**, no native tokens |
+| Backend | Supabase — Postgres + RLS, anonymous auth, Storage |
+| The gate | `SECURITY DEFINER` RPCs (`cairns_nearby`, `cairn_detail`, `stack_stone`) that compute distance server-side |
+| Audio | `expo-audio` (record + playback) · `expo-speech` (Brief me TTS) |
+
+---
+
+## Run it
+
+Cairn runs straight in **Expo Go** — no build, no signing.
 
 ```bash
-# 1. Dependencies
+git clone https://github.com/wminus-org/cairn.git
+cd cairn
 npm install
 
-# 2. Environment — fill in all four values before continuing
-cp .env.example .env
-$EDITOR .env
+# .env (gitignored)
+echo 'EXPO_PUBLIC_SUPABASE_URL=https://YOUR-PROJECT.supabase.co'  >  .env
+echo 'EXPO_PUBLIC_SUPABASE_ANON_KEY=YOUR_PUBLISHABLE_KEY'         >> .env
 
-# 3. Generate the native iOS project (iOS only — never a bare `prebuild`)
-npx expo prebuild --platform ios --clean
-
-# 4. Build and install on a plugged-in, unlocked, trusted iPhone
-npx expo run:ios --device
-
-# 5. Thereafter, just start Metro and launch the app from the home screen
-npm start
+npx expo start --go          # scan the QR with Expo Go
 ```
 
-`npm start` runs `expo start --dev-client`. Step 4 only needs repeating when a
-native module is added or a config plugin option changes.
-
-### The four values in `.env`
-
-| Variable | Where it comes from |
-|---|---|
-| `EXPO_PUBLIC_SUPABASE_URL` | Supabase dashboard → Project Settings → API |
-| `EXPO_PUBLIC_SUPABASE_ANON_KEY` | same page, the `anon` key |
-| `EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN` | Mapbox, `pk.…` |
-| `MAPBOX_DOWNLOAD_TOKEN` | Mapbox, `sk.…`, with `DOWNLOADS:READ` |
-
-`EXPO_PUBLIC_*` variables are **inlined into the JS bundle** and are readable by
-anyone with the app. That is correct for all three of them — the Supabase anon
-key is public by design because every table is default-deny under RLS. The
-`sk.` token has no prefix precisely because it must never reach a device.
-
-The Supabase **service_role** key is not in this project and must not be added
-to it. It bypasses RLS and belongs only to the seed script's own environment.
+On a different network from the machine? Add `--tunnel`.
 
 ---
 
-## Layout
+<div align="center">
 
-```
-app/                    expo-router routes. app/index.tsx is the placeholder screen.
-app.config.ts           Expo config. Reads tokens from process.env; nothing secret is literal.
-src/theme.ts            The palette and type scale from PLAN.md.
-src/env.ts              EXPO_PUBLIC_* access, with a readable error when unset.
-src/lib/supabase.ts     The Supabase client (URL polyfill + AsyncStorage session).
-src/lib/mapbox.ts       setAccessToken at boot. Nothing else — the map is CRN-006.
-src/lib/database.types.ts  Row shapes for the seven tables.
-supabase/               SQL. The schema is one paste — see tracker/reference/data-model.md.
-tracker/                Plan, board, tickets, reference. Start at tracker/README.md.
-```
+**Cairn** · voice notes, left in place.
 
-`ios/` and `android/` are **gitignored on purpose**. They are generated by
-`expo prebuild`, and the generated `Podfile` contains the `sk.` download token.
-Regenerate them; do not commit them. Android is out of scope entirely — if a
-bare `expo prebuild` ever creates an `android/` directory, delete it.
+The spec is [`tracker/PLAN.md`](tracker/PLAN.md) and it wins every argument.
 
----
-
-## The two rules that are not negotiable
-
-**1. The proximity gate is server-side.**
-Cairn positions and stone counts may go to any authenticated client. Audio
-URLs, image URLs, transcripts, body text and pins must **never** reach a client
-that has not proven proximity. The caller's position is an *argument* the
-server checks against the cairn row — a client-computed distance or a
-client-sent `unlocked` flag is not evidence of anything. The 200m→30m blur
-carries no partial data: the server has exactly two states, withheld and
-released, and the blur is a client-side rendering trick.
-
-A judge may open the network inspector. Assume they will.
-
-**2. Pin coordinates are normalized 0–1, never pixels.**
-A pin at `x=0.42, y=0.71` renders correctly on a 390pt iPhone, a 1024pt iPad,
-in portrait and in landscape, with no stored image dimensions and no scaling
-math. Store pixels and you will spend the 14:00 hour finding out why.
-
-Also: `cairns.radius_m` is a column, read per cairn. Never hardcode `30` in a
-render path — widening the indoor demo cairns at 15:00 has to be one `UPDATE`,
-not a rebuild.
-
----
-
-## Troubleshooting
-
-| Symptom | Cause |
-|---|---|
-| `401 Unauthorized` during `pod install` | `MAPBOX_DOWNLOAD_TOKEN` missing, mistyped, or lacks `DOWNLOADS:READ`. |
-| Native module not found in Expo Go | Expected. Expo Go cannot load this app. Build a dev client. |
-| Permission string change had no effect | Config plugins only run during prebuild. `npx expo prebuild --platform ios --clean`, rebuild. |
-| Map is black, or crash on mount | **There is no `newArchEnabled` escape hatch on SDK 57** — the New Architecture is the only architecture and the config option no longer exists. So check, in order: the `pk.` token actually reached the bundle (`--clear` the Metro cache), the style URL is published, and `@rnmapbox/maps` is on a version that supports RN 0.86. **Timebox to fifteen minutes**, then fall back to a raw style JSON object per CRN-006. |
-| Map is empty but not black | Contour geometry does not exist at low zoom in Terrain v2. Zoom in before concluding the style is broken. |
-| Map blank on a teammate's build only | The Mapbox Studio style is an unpublished draft. Publish it. |
-| Dropped in the Indian Ocean | Coordinate order. Mapbox is `[longitude, latitude]`; `expo-location` returns `{latitude, longitude}`. Check this first, every time. |
-| A config plugin you just installed does nothing | `expo install` writes plugin entries into an `app.json` it creates next to `app.config.ts`, and `app.config.ts` replaces `plugins` wholesale. Delete the stray `app.json` and add the plugin to the array in `app.config.ts` by hand. |
-| `.env` change not picked up | Restart Metro with `npx expo start --dev-client --clear`. `EXPO_PUBLIC_*` is inlined at bundle time. |
-| A `select()` returns `[]` instead of erroring | Correct. Every table is default-deny under RLS with no select policies. Reads go through the RPCs. |
+</div>
