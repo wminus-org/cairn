@@ -77,7 +77,23 @@ async function signInIfNeeded(): Promise<Session> {
 
   const { data: existing, error: getError } = await auth.getSession();
   if (getError) throw getError;
-  if (existing.session) return existing.session;
+
+  // A stored session is not proof the user still exists. `getSession()` only
+  // reads AsyncStorage — it never asks the server. Wipe the database (which
+  // happens repeatedly on a build day) and the phone keeps presenting a JWT
+  // for a deleted user: `auth.uid()` still resolves, so RLS lets the insert
+  // through, and it dies on `cairns_created_by_fkey` instead, because the
+  // trigger-created `profiles` row went with the user.
+  //
+  // `getUser()` does hit the server, so it is the cheap way to tell a live
+  // session from a ghost. One round trip, once per app run.
+  if (existing.session) {
+    const { error: userError } = await auth.getUser();
+    if (!userError) return existing.session;
+    await auth.signOut().catch(() => {
+      // Already gone server-side; the local clear below is what matters.
+    });
+  }
 
   const { data: created, error: signInError } = await auth.signInAnonymously();
   if (signInError) {
