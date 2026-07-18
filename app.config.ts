@@ -25,10 +25,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   userInterfaceStyle: 'dark',
   backgroundColor: '#0F1E17',
   assetBundlePatterns: ['**/*'],
-  // NOTE: there is no `newArchEnabled` here and there cannot be. Expo SDK 57
-  // dropped the option — the New Architecture is the only architecture, and
-  // @expo/config-types no longer declares the field. If the map mounts black,
-  // it is not an architecture flag; check the pk.* token and the style URL.
+  // The New Architecture is required by @react-native-ai/apple (TurboModules).
+  // SDK 54 enables it by default; stated here so nobody "simplifies" it off.
+  newArchEnabled: true,
 
   ios: {
     bundleIdentifier: 'dev.nejc.cairn',
@@ -61,6 +60,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   plugins: [
     'expo-router',
     'expo-asset',
+    // Required for the custom dev client. @react-native-ai/apple is a
+    // TurboModule and cannot run in Expo Go at all, so from here on the app is
+    // built with `eas build --profile development`, not scanned into Expo Go.
+    'expo-dev-client',
 
     [
       'expo-location',
@@ -99,6 +102,15 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     // so a missing value can be reported at boot instead of at first map mount.
     mapboxAccessToken: process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN,
     supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL,
+  },
+
+  // Required for `app/api/*+api.ts` to exist at all. Expo Router only mounts API
+  // routes when the router is building for a server output, and with this set
+  // `expo start` serves them from the same Metro origin the phone already loads
+  // the bundle from — which is why the audio signer needs no deployment today.
+  // It changes nothing about the native app: there is no web target here.
+  web: {
+    output: 'server',
   },
 
   experiments: {

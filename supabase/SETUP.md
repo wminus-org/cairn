@@ -2,7 +2,7 @@
 
 Ten minutes. Do it once, carefully. Everything else in the build is blocked on this.
 
-You will end up with a project URL and an anon key that go into `.env`. **The service_role key is not needed and must not go in `.env`** — it bypasses RLS and `EXPO_PUBLIC_*` variables are inlined into the app bundle.
+You will end up with a project URL and an anon key that go into `.env`, plus — for audio playback only — a service_role key that goes into the same file **without** the `EXPO_PUBLIC_` prefix. That prefix is the difference between a server-side secret and a key shipped to every device; see step 6.
 
 ---
 
@@ -107,6 +107,36 @@ EXPO_PUBLIC_SUPABASE_ANON_KEY=eyJ...
 
 The anon key being public is fine and by design: every table is default-deny under RLS, and all reads go through security-definer RPCs. That is exactly what `supabase/tests/` verifies.
 
+## 6. Audio signing — the service_role key
+
+Without this step everything works except playback: a stone shows up, unlocks, and the player returns a `501` naming the missing variable.
+
+`cairn-audio` is a **private** bucket and stays that way. `cairn_detail` returns `audio_path` — a storage path like `{cairn_id}/{stone_id}.m4a`, not a URL — and something has to turn that into a playable link. That something is `app/api/audio+api.ts`, an Expo Router API route served by the Metro dev server. No deployment, no Edge Function.
+
+What the route does, in order:
+
+1. Re-runs `cairn_detail` **as the calling user**, using the anon key plus the caller's JWT, so RLS and Space membership apply exactly as they do in the app.
+2. Refuses with `403` unless the server-derived band is `unlocked` **and** the requested stone is in that cairn's stone list.
+3. Only then signs, using the service_role key, for **60 seconds**.
+
+The client never signs. Clients have no `select` on `storage.objects` on purpose: both ids in the storage key are published at 200m, so a client that could sign could play anything from anywhere.
+
+**Get the key:**
+
+1. Left sidebar → **Project Settings** (gear) → **API Keys** (older dashboards: **API**).
+2. Find **`service_role`** — labelled `secret`, and usually behind a *Reveal* button. It is the one with the loud warning next to it. **Not** the anon/publishable key you copied in step 5.
+3. Add it to `.env`:
+
+```
+SUPABASE_SERVICE_ROLE_KEY=eyJ...
+```
+
+**No `EXPO_PUBLIC_` prefix. Ever.** `EXPO_PUBLIC_*` variables are inlined into the JS bundle by Metro at build time, so `EXPO_PUBLIC_SUPABASE_SERVICE_ROLE_KEY` would hand a complete RLS bypass — every row, every bucket, every user — to anyone who opens the app and reads the bundle. The bare name is read only by the API route, which runs on the dev server and never reaches a device.
+
+Restart Metro after adding it (`npx expo start --clear`); env values are read at server start.
+
+Also note `web: { output: 'server' }` in `app.config.ts`. API routes do not exist without it.
+
 ---
 
 ## Done when
@@ -116,6 +146,7 @@ The anon key being public is fine and by design: every table is default-deny und
 - [ ] Both buckets exist and are **private**
 - [ ] `distance_m` returns ~1111.95
 - [ ] `.env` has the URL and anon key, and is not committed
+- [ ] `SUPABASE_SERVICE_ROLE_KEY` is in `.env` **without** the `EXPO_PUBLIC_` prefix
 
 ## If something goes wrong
 
@@ -125,4 +156,7 @@ The anon key being public is fine and by design: every table is default-deny und
 | `500 Database error saving new user` | The `handle_new_user` trigger raised. Re-run 0003 and re-check step 3. |
 | `permission denied for table stones` **from the app** | Expected and correct — clients never read tables directly, only RPCs. If a *feature* hits this, it is calling the table instead of `cairnApi.ts`. |
 | `function public.cairns_nearby does not exist` | 0004 did not apply, or PostgREST's schema cache is stale. Re-run 0004; the cache reloads within seconds. |
-| Audio does not play | Expected right now. The signing Edge Function is not built yet — see the note in `tests/README.md`. |
+| `501 signing-not-configured` on playback | `SUPABASE_SERVICE_ROLE_KEY` missing from `.env`, or Metro not restarted since it was added. Step 6. |
+| `403 not-unlocked` on playback | Working as designed — the server re-derived the distance and you are outside `radius_m`. Walk closer. |
+| Playback request never resolves / connection refused | The device cannot reach the dev server. The base URL comes from `Constants.expoConfig.hostUri`; on a phone that means same wifi as the laptop, or use `--tunnel`. |
+| `404` on `/api/audio` | `web: { output: 'server' }` missing from `app.config.ts`, or Metro started before it was added. |

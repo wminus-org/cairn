@@ -12,6 +12,7 @@
  *   - Position comes from the single watch in src/lib/usePosition.ts, so demo
  *     mode (CRN-025) can override one thing and have everything follow.
  */
+import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import MapView, { Marker, type Region } from 'react-native-maps';
@@ -85,6 +86,7 @@ function glyphSize(stoneCount: number): number {
 }
 
 export default function MapScreen() {
+  const router = useRouter();
   const { coords, status, error: positionError } = usePosition();
   const [cairns, setCairns] = useState<CairnSummary[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -229,6 +231,9 @@ export default function MapScreen() {
                 cairn.stone_count === 1 ? 'stone' : 'stones'
               } · ${cairn.distance_m} m`}
               tracksViewChanges={false}
+              // The thread screen refetches with its own position, so nothing
+              // about the cairn travels in the route but its id.
+              onPress={() => router.push(`/cairn/${cairn.id}`)}
             >
               <View
                 style={[

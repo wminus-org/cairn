@@ -20,14 +20,16 @@
  *    means "not visible to you". Do not catch P0002 anywhere else.
  *  - **What comes back for media is a PATH, not a URL** (`audio_path`,
  *    `image_path`), and only in the `unlocked` band. Do not feed a path to an
- *    audio player. Signing is CRN-005's Edge Function; when it lands it adds
- *    `audio_url` / `image_url` alongside, and the optional fields below are
- *    already shaped for it.
+ *    audio player. Signing goes through `getStoneAudioUrl()` below, which asks
+ *    the server-side route in `app/api/audio+api.ts` — never `createSignedUrl`
+ *    from here. Clients have no select on `storage.objects`, deliberately.
  *
  * Positions are `{ latitude, longitude }` throughout — the same shape
  * `usePosition()` hands out, so a caller passes `coords` straight in. The one
  * place lat/lng flips to Mapbox's `[lng, lat]` is in usePosition.ts.
  */
+import Constants from 'expo-constants';
+
 import type { CairnMarker, StoneKind } from './database.types';
 import { ensureSession, getSupabase, storageKeys, uploadToBucket } from './supabase';
 
@@ -262,6 +264,130 @@ export async function fetchCairnDetail(
   if (!data) return null;
 
   return data as CairnDetail;
+}
+
+// --- Media: signed playback URLs --------------------------------------------
+
+/** What the signer hands back. `url` is short-lived — fetch it, play it, drop it. */
+export interface SignedAudio {
+  url: string;
+  /** Seconds the URL stays valid, from the moment the server signed it. */
+  expiresIn: number;
+}
+
+/**
+ * Turns a stone's `audio_path` into something an audio player can actually open.
+ *
+ * The client does NOT sign. It asks `app/api/audio+api.ts` — an Expo Router API
+ * route running on the Metro dev server — which re-runs `cairn_detail` as this
+ * caller, confirms band = 'unlocked', and only then signs with the service_role
+ * key. So the position below is not a formality and not a hint: it is the proof.
+ * Pass `usePosition().coords` unchanged; a stale or invented position gets a 403
+ * from the same gate that decides the band, which is the point.
+ *
+ * The token goes in an Authorization header because the route needs to act AS
+ * this user — RLS, `auth.uid()`, Space membership. Without it the route cannot
+ * tell one anonymous walker from another and refuses.
+ *
+ * ON THE BASE URL, which is the part most likely to break. There is no fixed
+ * host: the dev server is on whatever LAN address the laptop has today, or on
+ * an `*.exp.direct` tunnel, and hardcoding either means it works on one machine.
+ * `Constants.expoConfig.hostUri` is the host the bundle was actually loaded
+ * from, so it is right by construction in both modes — same origin as Metro,
+ * which is the only host we know the phone can reach.
+ *
+ * Two things that hostUri does not tell you and have to be inferred:
+ *  - SCHEME. A LAN address is plain http (Metro serves no TLS). A tunnel is
+ *    https and MUST be, since ngrok will not serve http and iOS ATS would
+ *    refuse it anyway. Private IPs and localhost → http, anything else → https.
+ *  - PORT. Tunnels report `host:80`, and `https://host:80` connects to the
+ *    wrong port and hangs, so the port is dropped whenever the scheme is https.
+ *
+ * If this throws "cannot locate the dev server", the app was almost certainly
+ * loaded from a production/exported bundle, where there is no hostUri and no
+ * API route either.
+ */
+export async function getStoneAudioUrl(
+  cairnId: string,
+  stoneId: string,
+  position: LatLng,
+): Promise<SignedAudio> {
+  const session = await ensureSession();
+
+  const response = await fetch(`${apiBaseUrl()}/api/audio`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${session.access_token}`,
+    },
+    body: JSON.stringify({
+      cairnId,
+      stoneId,
+      latitude: position.latitude,
+      longitude: position.longitude,
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = (await response.json().catch(() => null)) as {
+      error?: string;
+      message?: string;
+    } | null;
+    const message = detail?.message ?? `Audio signing failed (${response.status}).`;
+    // 403 from this route means one thing only: the server re-checked the
+    // distance and said no. Surface it as 'too-far' so a screen can say "walk
+    // closer" with the copy it already has for `stack_stone`.
+    throw new CairnApiError(
+      message,
+      response.status === 403 ? 'too-far' : response.status === 401 ? 'unauthenticated' : 'unknown',
+      'api/audio',
+      detail?.error ?? String(response.status),
+    );
+  }
+
+  const signed = (await response.json()) as SignedAudio;
+  if (!signed?.url) {
+    throw new CairnApiError('Audio signing returned no URL.', 'unknown', 'api/audio');
+  }
+  return signed;
+}
+
+function apiBaseUrl(): string {
+  const hostUri = Constants.expoConfig?.hostUri;
+  if (!hostUri) {
+    throw new CairnApiError(
+      'Cannot locate the dev server (no Constants.expoConfig.hostUri), so audio ' +
+        'cannot be signed. API routes only exist while `expo start` is running.',
+      'unknown',
+      'api/audio',
+    );
+  }
+
+  const [host, port] = splitHostPort(hostUri);
+  const secure = !isLocalHost(host);
+  return secure ? `https://${host}` : `http://${host}${port ? `:${port}` : ''}`;
+}
+
+/** IPv6 hosts arrive bracketed (`[::1]:8081`), so a naive split on ':' is wrong. */
+function splitHostPort(hostUri: string): [string, string | null] {
+  const bare = hostUri.replace(/^[a-z]+:\/\//i, '').split('/')[0];
+  const bracketed = /^(\[[^\]]+\])(?::(\d+))?$/.exec(bare);
+  if (bracketed) return [bracketed[1], bracketed[2] ?? null];
+
+  const index = bare.lastIndexOf(':');
+  if (index === -1) return [bare, null];
+  return [bare.slice(0, index), bare.slice(index + 1) || null];
+}
+
+function isLocalHost(host: string): boolean {
+  return (
+    host === 'localhost' ||
+    host === '[::1]' ||
+    /^127\./.test(host) ||
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+  );
 }
 
 // --- Write path: stack_stone ------------------------------------------------
@@ -646,6 +772,75 @@ function singleFlightDrop(run: () => Promise<string>): Promise<string> {
   });
   inFlightDrop = attempt;
   return attempt;
+}
+
+// --- Server routes ----------------------------------------------------------
+
+/**
+ * Asks the server to transcribe a voice stone and write the text into
+ * `stones.transcript`. Resolves with the transcript, or `null` when it did not
+ * happen for any reason at all.
+ *
+ * THIS IS OPTIONAL WORK AND IT MUST STAY OPTIONAL. Nothing in the capture path
+ * may await it and nothing may branch on it: a stone is on the map and playable
+ * the instant `stack_stone` returns, and the transcript catches up later or
+ * never. CRN-022 times both cases with a stopwatch and they have to match. So
+ * this function does not throw — a dead key, a 501, a 500 from ElevenLabs, no
+ * dev server at all, all come back as `null`. Never let a rejection out of
+ * here: an un-awaited promise that rejects is an unhandled rejection, and on
+ * React Native that is a redbox mid-rehearsal that reads as a failed upload.
+ *
+ * Null is also the whole state machine on the other side. There is no
+ * `transcript_status` and no retry queue — one attempt, then give up, and the
+ * thread renders a null transcript as audio-only with no spinner and no empty
+ * grey box.
+ *
+ * The position is required and is not decoration: the server re-runs
+ * `cairn_detail` under the caller's own token and refuses unless the band comes
+ * back `unlocked`. Transcribing for someone who could not have heard the audio
+ * would hand them the contents of a cairn they never walked to.
+ *
+ * Deliberately NOT wired into `stackVoiceStone()`. The thread screen decides
+ * when to ask and what to do with the answer; the upload path stays a straight
+ * line.
+ *
+ * Shares `apiBaseUrl()` with the signing call rather than resolving the dev
+ * server a second way — it already knows about tunnels, IPv6 and the http/https
+ * split, and two copies of that logic would drift the first time one is fixed.
+ * It throws when there is no dev server; the catch below turns that into `null`
+ * along with everything else.
+ */
+export async function requestTranscription(
+  cairnId: string,
+  stoneId: string,
+  position: LatLng,
+): Promise<string | null> {
+  try {
+    const session = await ensureSession();
+
+    const response = await fetch(`${apiBaseUrl()}/api/transcribe`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({
+        cairnId,
+        stoneId,
+        latitude: position.latitude,
+        longitude: position.longitude,
+      }),
+    });
+
+    if (!response.ok) return null;
+
+    const payload = (await response.json()) as { transcript?: unknown };
+    return typeof payload.transcript === 'string' ? payload.transcript : null;
+  } catch {
+    // Swallowed on purpose. See the contract above: there is no failure mode
+    // of transcription that the walker is supposed to find out about.
+    return null;
+  }
 }
 
 // --- Errors -----------------------------------------------------------------
