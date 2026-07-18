@@ -1,6 +1,6 @@
 # Supabase — apply order
 
-**None of this SQL has been executed.** It was written on a machine with no Postgres and no Docker. It is correct by construction, not verified. Run it in the Supabase SQL editor as the project owner, one file at a time, **in order**, and check after each. All four files are safe to re-run.
+**This SQL has never run against a Supabase project.** It was written on a machine with no Postgres and no Docker, then applied end to end on a throwaway Postgres 15 container using the shim in `tests/`: all four files applied with zero errors, re-ran clean, and `tests/01_proximity_gate_test.sql` reported **10 passed, 0 failed**. That proves the SQL parses, that `distance_m()` is accurate, that the check and unique constraints bite, and that the gate does not leak. It proves nothing about buckets, Auth, PostgREST or Storage RLS — the shim only sketches those. Run it in the Supabase SQL editor as the project owner, one file at a time, **in order**, and check after each. All four files are safe to re-run.
 
 | # | File | Ticket | What it does |
 |---|---|---|---|
@@ -10,6 +10,21 @@
 | 4 | `migrations/0004_proximity_gate.sql` | CRN-005 / CRN-020 / CRN-017 | The two read RPCs, write policies, `stack_stone` |
 
 Do steps 1–3 at 10:30. Step 4 can follow at 11:00; nothing before it needs it.
+
+---
+
+## Still open — acceptance criteria only the real project can close
+
+The local container closed everything it could. These are the ones left, and they are the *majority* of CRN-003. Until someone ticks them by hand in the dashboard and from the app, those tickets are not done. Carry this list through the run below.
+
+- [ ] Both buckets show **private** in Storage (CRN-003 #1) — step 2
+- [ ] An authenticated upload lands at `cairn-audio/{cairn_id}/{stone_id}.m4a` with **non-zero byte size** (#2) — step 2
+- [ ] That same object plays back **audibly**, not just downloads (#3) — step 2
+- [ ] Client `.download(path)` fails on permissions (#4) — step 2
+- [ ] `getPublicUrl(path)` pasted in a browser returns an error (#5) — step 2
+- [ ] A service-key `createSignedUrl(path, 60)` streams, then 400s after a minute (#6) — step 2
+- [ ] All seven tables in the Table Editor carry the **RLS badge** (CRN-002) — step 1
+- [ ] `signInAnonymously()` produces exactly one `profiles` row, inserted by the trigger (CRN-004) — step 3
 
 ---
 
@@ -40,7 +55,7 @@ Both rows must show `public = false`. **Look at it, don't assume it** — and if
 
 Then, from the client: `getPublicUrl(path)` pasted in a browser must return an error, and `.download(path)` must fail on permissions. With the service key, `createSignedUrl(path, 60)` must stream and then 400 after a minute.
 
-On the very first real upload, check the **byte size** in the dashboard. A 0-byte or 44-byte object is the classic React Native upload failure and it passes every other check.
+On the very first real upload, confirm the object landed at exactly `{cairn_id}/{stone_id}.m4a` inside `cairn-audio`, then check its **byte size** in the dashboard, then actually **play it back and hear it**. A 0-byte or 44-byte object is the classic React Native upload failure and it passes every other check — right key, right MIME type, no error returned. Silence on playback is the only thing that catches it.
 
 ## 3. `0003_auth.sql`
 

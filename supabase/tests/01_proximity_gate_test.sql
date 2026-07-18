@@ -7,6 +7,9 @@
 \pset pager off
 
 create temp table results (n int generated always as identity, name text, pass boolean, detail text);
+-- Test 8 runs under `set role authenticated`; without this the RLS block dies
+-- on "permission denied for table results" instead of recording its verdict.
+grant select, insert on results to authenticated;
 
 do $$
 declare
@@ -105,9 +108,18 @@ begin
   exception when others then
     v_txt := 'EXCEPTION: ' || sqlerrm;
   end;
+  -- NOTE: the server rebuilds the storage path from ids it controls and does
+  -- NOT echo the client-written audio_url column. So the correct assertion at
+  -- 0m is that the DERIVED path is present and the client-supplied string is
+  -- absent. Asserting the sentinel came back would be asserting the
+  -- confused-deputy bug — see 02_path_forgery_test.sql.
   insert into results(name, pass, detail) values (
-    'cairn_detail @0m: audio_url IS released',
-    v_txt like '%SENTINEL-AUDIO-LEAK%',
+    'cairn_detail @0m: derived audio path IS released',
+    v_txt like '%' || v_personal::text || '/' || v_stone::text || '.m4a%',
+    left(v_txt, 200));
+  insert into results(name, pass, detail) values (
+    'cairn_detail @0m: client-written audio_url is NOT echoed',
+    v_txt not like '%SENTINEL-AUDIO-LEAK%',
     left(v_txt, 200));
   insert into results(name, pass, detail) values (
     'cairn_detail @0m: transcript IS released',

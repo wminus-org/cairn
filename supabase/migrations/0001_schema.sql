@@ -13,7 +13,9 @@
 --     0003_auth.sql
 --     0004_proximity_gate.sql
 --
--- Safe to re-run. Nothing here drops or truncates a table.
+-- Safe to re-run. No table is dropped and no row is deleted. The
+-- reconciliation block near the end does drop and re-add one check
+-- constraint and one index, on purpose — see the comment there.
 --
 -- Deliberately NOT in this file: any RLS policy at all. RLS is turned on
 -- with zero policies, which means anon and authenticated read nothing.
@@ -137,6 +139,30 @@ create index if not exists pins_stone_id_idx          on public.pins (stone_id);
 -- on every map pan.
 create index if not exists space_members_user_idx     on public.space_members (user_id, space_id);
 -- spaces (join_code) comes free with the unique constraint.
+
+-- Reconciliation ------------------------------------------------------
+-- `create table if not exists` and `create index if not exists` are
+-- no-ops when the object already exists WITH A DIFFERENT SHAPE. They do
+-- not reconcile, and they do not warn. reference/data-model.md publishes
+-- its own copy of this paste that creates the same seven tables and the
+-- same index names but without accent_hex's regex check and with
+-- space_members_user_idx on (user_id) alone. If that block ran first,
+-- everything above this line silently applies nothing and you are short a
+-- constraint and an index column with no error to tell you.
+--
+-- These four statements are idempotent and cost nothing on a fresh
+-- database, where they just replace what was created seconds ago.
+--
+-- If the add constraint fails, it is because a row already violates it:
+-- fix the row (`select id, accent_hex from public.spaces` — look for
+-- 'red'), do not weaken the check.
+alter table public.spaces drop constraint if exists spaces_accent_hex_check;
+alter table public.spaces add  constraint spaces_accent_hex_check
+  check (accent_hex ~ '^#[0-9A-Fa-f]{6}$');
+
+drop index if exists public.space_members_user_idx;
+create index if not exists space_members_user_idx
+  on public.space_members (user_id, space_id);
 
 -- RLS: default deny on all seven tables, zero policies here -----------
 -- Under PostgREST this means a direct from('stones').select() returns []
