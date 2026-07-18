@@ -17,6 +17,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 import MapView, { Marker, type Region } from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import DropCairnSheet from '../src/capture/DropCairnSheet';
 import {
   fetchNearbyCairns,
   isCairnApiError,
@@ -39,6 +40,21 @@ const TECHNOLOGY_PARK: Region = {
  * battery we are demoing on.
  */
 const REFETCH_AFTER_M = 25;
+
+/**
+ * How far from your actual fix a long-press may place a cairn.
+ *
+ * 30 m is `cairns.radius_m`'s default, which makes this more than a sanity
+ * limit: a cairn dropped that close still contains the walker, so the first
+ * stone would have cleared stack_stone's proximity check on an honest position
+ * too. That matters because DropCairnSheet takes one `coords` and it is both
+ * the drop point AND the proximity proof — an unclamped long-press would hand
+ * the server a position it cannot help but accept, and the whole product is
+ * the claim that you had to be there. Long-press is for nudging a pin onto the
+ * thing you mean when GPS puts you through a wall. It is not a way to leave a
+ * note in a city you are not in.
+ */
+const MAX_DROP_OFFSET_M = 30;
 
 /** Rough metres between two coordinates. Only used to decide when to refetch. */
 function metresBetween(
@@ -73,6 +89,18 @@ export default function MapScreen() {
   const [cairns, setCairns] = useState<CairnSummary[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [dropping, setDropping] = useState(false);
+  /**
+   * Where the pending drop lands. `null` means "at my feet" and lets the live
+   * fix flow through to the sheet, which is what the button has always done —
+   * the sheet snapshots at submit so the cairn lands where you were standing
+   * when you spoke. A long-press sets an explicit point instead and freezes it,
+   * because a hand-placed pin that drifts with the walker is not hand-placed.
+   */
+  const [dropPoint, setDropPoint] = useState<{ latitude: number; longitude: number } | null>(
+    null,
+  );
+  const [dropTooFar, setDropTooFar] = useState(false);
 
   /** Where we last ran the nearby query, so we can throttle by distance. */
   const lastFetchAt = useRef<{ latitude: number; longitude: number } | null>(null);
@@ -94,6 +122,49 @@ export default function MapScreen() {
       setLoading(false);
     }
   }, []);
+
+  /**
+   * A drop is the one case where the distance throttle is wrong: the cairn set
+   * changed under a user who has not moved a metre, so the movement test would
+   * hold the new pin off the map indefinitely. Calling load() directly skips
+   * that test — the throttle lives in the position effect, not in load itself.
+   */
+  const handleDropped = useCallback(() => {
+    setDropping(false);
+    setDropPoint(null);
+    if (!coords) return;
+    void load({ latitude: coords.latitude, longitude: coords.longitude });
+  }, [coords, load]);
+
+  /** The button entry point: drop at my feet, tracking the live fix. */
+  const handleDropHere = useCallback(() => {
+    setDropPoint(null);
+    setDropTooFar(false);
+    setDropping(true);
+  }, []);
+
+  /**
+   * The long-press entry point (CRN-009 AC1). Same sheet, same submit — the
+   * only difference is where the cairn lands. react-native-maps hands back a
+   * full synthetic event; we narrow it to lat/lng here so nothing downstream
+   * has to know react-native-maps exists.
+   */
+  const handleLongPress = useCallback(
+    (event: { nativeEvent: { coordinate: { latitude: number; longitude: number } } }) => {
+      // No fix means nothing to measure the press against, and the sheet is not
+      // even mounted. Same reason the button is disabled.
+      if (!coords) return;
+      const point = event.nativeEvent.coordinate;
+      if (metresBetween(coords, point) > MAX_DROP_OFFSET_M) {
+        setDropTooFar(true);
+        return;
+      }
+      setDropTooFar(false);
+      setDropPoint({ latitude: point.latitude, longitude: point.longitude });
+      setDropping(true);
+    },
+    [coords],
+  );
 
   // Fetch on first fix, then only after real movement.
   useEffect(() => {
@@ -126,10 +197,11 @@ export default function MapScreen() {
     }
     if (status === 'unavailable') return 'No position yet. Step outside if you can.';
     if (status === 'requesting' || !coords) return 'Finding you…';
+    if (dropTooFar) return 'Too far from you. Press closer to where you are standing.';
     if (loadError) return loadError;
     if (cairns.length === 0) return 'No cairns nearby. Drop the first one.';
     return `${cairns.length} ${cairns.length === 1 ? 'cairn' : 'cairns'} nearby`;
-  }, [status, coords, loadError, cairns.length, positionError]);
+  }, [status, coords, dropTooFar, loadError, cairns.length, positionError]);
 
   return (
     <View style={styles.root}>
@@ -144,6 +216,7 @@ export default function MapScreen() {
         showsTraffic={false}
         userInterfaceStyle="dark"
         toolbarEnabled={false}
+        onLongPress={handleLongPress}
       >
         {cairns.map((cairn) => {
           const size = glyphSize(cairn.stone_count);
@@ -181,18 +254,27 @@ export default function MapScreen() {
 
         <View style={styles.spacer} pointerEvents="none" />
 
-        <Pressable
-          style={styles.dropButton}
-          onPress={() => {
-            // CRN-009 lands here: drop a cairn at the current position.
-          }}
-          disabled={!coords}
-        >
+        <Pressable style={styles.dropButton} onPress={handleDropHere} disabled={!coords}>
           <Text style={styles.dropLabel}>
             {coords ? 'LEAVE SOMETHING HERE' : 'WAITING FOR POSITION'}
           </Text>
         </Pressable>
       </SafeAreaView>
+
+      {/* The sheet requires a fix — it has nowhere to put the cairn without one.
+          Mounting it only when we have coords also means a fix lost mid-drop
+          tears the sheet down rather than silently relocating the pin. */}
+      {coords ? (
+        <DropCairnSheet
+          visible={dropping}
+          coords={dropPoint ?? coords}
+          onClose={() => {
+            setDropping(false);
+            setDropPoint(null);
+          }}
+          onDropped={handleDropped}
+        />
+      ) : null}
     </View>
   );
 }

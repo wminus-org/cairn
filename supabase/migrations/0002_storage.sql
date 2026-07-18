@@ -87,6 +87,16 @@ create policy "cairn media insert"
 -- helper into this file either — two definitions of one authorisation
 -- rule is how they drift.
 --
+-- STATUS, VERIFIED 18 Jul: 0004 DID NOT DO IT. can_write_cairn() is
+-- defined there (line 74) and granted to authenticated, and nothing calls
+-- it — `grep -n 'storage.objects' 0004_proximity_gate.sql` returns one
+-- hit and it is a comment. So the policy live in the project right now is
+-- the placeholder below: any authenticated session, including a fresh
+-- anonymous one, may write under any cairn id it can read off
+-- cairns_nearby(). stack_stone() is unaffected — it rebuilds the path
+-- from ids it controls and compares — so the demo flow works and this
+-- hole is silent. It is an open authorisation gap, not a broken build.
+--
 -- So 0004 must re-create this policy, after the helper exists, as:
 --
 --   drop policy if exists "cairn media insert" on storage.objects;

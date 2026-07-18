@@ -29,7 +29,7 @@
  * place lat/lng flips to Mapbox's `[lng, lat]` is in usePosition.ts.
  */
 import type { CairnMarker, StoneKind } from './database.types';
-import { ensureSession, getSupabase } from './supabase';
+import { ensureSession, getSupabase, storageKeys, uploadToBucket } from './supabase';
 
 // --- Positions --------------------------------------------------------------
 
@@ -271,21 +271,34 @@ export async function fetchCairnDetail(
  * will be — identity comes from `auth.uid()` inside the function. Position is
  * an input; identity never is.
  *
- * Order of operations for media (from 0002_storage.sql): mint the stone id
- * client-side is NOT how this one works — `stack_stone` returns the id. Upload
- * to a temporary key or upload first and pass the path here; do not try to
- * `.insert().select()` on `stones`, which fails because there is no select
- * policy by design.
+ * ORDER OF OPERATIONS FOR MEDIA — mint, upload, then call. The doc comment
+ * here used to say `stack_stone` returns the id and you must therefore upload
+ * afterwards. That is no longer true and has not been since 0004 grew a tenth
+ * parameter: `p_stone_id` is CLIENT-MINTED. Read the function body — it does
+ * `coalesce(p_stone_id, gen_random_uuid())`, rebuilds the canonical key from
+ * `p_cairn_id` and that id, and then `raise exception 'audio path must be %'`
+ * if the path you passed is not character-for-character the key it derived. So
+ * the id has to exist before the upload, which is the whole reason the
+ * parameter is there. `p_stone_id` is REQUIRED whenever a media path is given;
+ * a text stone may omit it and let the server mint one.
+ *
+ * Still true: do not `.insert().select()` on `stones`. There is no select
+ * policy by design, and there is no insert privilege either.
  */
 export interface StackStoneInput {
   cairnId: string;
   kind: StoneKind;
   /** The caller's position. The server re-checks it against `radius_m`. */
   position: LatLng;
+  /**
+   * Mint with `newStoneId()` BEFORE uploading, and pass the same value here.
+   * Required if `audioPath` or `imagePath` is set; omit it for a text stone.
+   */
+  stoneId?: string | null;
   bodyText?: string | null;
-  /** Storage object path, never a signed URL. */
+  /** Storage object path, never a signed URL. Must equal `storageKeys.stoneAudio(cairnId, stoneId)`. */
   audioPath?: string | null;
-  /** Storage object path, never a signed URL. */
+  /** Storage object path, never a signed URL. Must equal `storageKeys.stoneImage(cairnId, stoneId)`. */
   imagePath?: string | null;
   imageAspectRatio?: number | null;
   transcript?: string | null;
@@ -303,10 +316,11 @@ export async function stackStone(input: StackStoneInput): Promise<string> {
   await ensureSession();
 
   const { data, error } = await getSupabase().rpc('stack_stone', {
-    // All nine arguments, every time. The function has defaults, but PostgREST
-    // resolves overloads by the exact set of argument names it is given, and a
-    // partial set is how you get PGRST202/PGRST203 ("function not found") for a
-    // function that plainly exists.
+    // All TEN arguments, every time — 0004 drops the 9-arg signature and
+    // creates a 10-arg one ending in `p_stone_id`. The function has defaults,
+    // but PostgREST resolves overloads by the exact set of argument names it is
+    // given, and a partial set is how you get PGRST202/PGRST203 ("function not
+    // found") for a function that plainly exists.
     p_cairn_id: input.cairnId,
     p_kind: input.kind,
     p_lat: input.position.latitude,
@@ -316,6 +330,7 @@ export async function stackStone(input: StackStoneInput): Promise<string> {
     p_image_path: input.imagePath ?? null,
     p_image_aspect_ratio: input.imageAspectRatio ?? null,
     p_transcript: input.transcript ?? null,
+    p_stone_id: input.stoneId ?? null,
   });
 
   if (error) throw toCairnApiError(error, 'stack_stone');
@@ -323,6 +338,314 @@ export async function stackStone(input: StackStoneInput): Promise<string> {
     throw new CairnApiError('stack_stone returned no stone id.', 'unknown', 'stack_stone');
   }
   return data;
+}
+
+// --- Write path: dropping a cairn -------------------------------------------
+
+/**
+ * A stone/cairn id, minted client-side.
+ *
+ * Hand-rolled because there is no CSPRNG to reach for: `expo-crypto` is not a
+ * dependency, `react-native-get-random-values` is not a dependency, Hermes
+ * ships no `crypto` global of its own, and Expo SDK 54's winter runtime
+ * polyfills `fetch`/`URL`/`TextDecoder` but not Web Crypto. `uuid` is in
+ * node_modules only as somebody else's transitive dependency, which is not a
+ * thing to build a write path on. Adding a package is off the table — this
+ * runs in Expo Go.
+ *
+ * So: use `getRandomValues` if some future dependency provides it, and fall
+ * back to `Math.random`. That fallback is NOT cryptographic, and it does not
+ * need to be. These ids are not secrets and not capabilities — 0002 is explicit
+ * that storage paths are public knowledge and that the signer, not path
+ * secrecy, is the control. All this has to do is not collide.
+ */
+export function newStoneId(): string {
+  const bytes = new Uint8Array(16);
+  const webCrypto = (globalThis as { crypto?: { getRandomValues?: (a: Uint8Array) => void } })
+    .crypto;
+  if (typeof webCrypto?.getRandomValues === 'function') {
+    webCrypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  // Version 4, variant 10xx. The SQL casts the first path segment to ::uuid
+  // behind a regex, so a malformed id is an RLS violation, not a soft failure.
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+  const hex: string[] = [];
+  for (let i = 0; i < bytes.length; i += 1) hex.push(bytes[i].toString(16).padStart(2, '0'));
+  return (
+    hex.slice(0, 4).join('') +
+    '-' +
+    hex.slice(4, 6).join('') +
+    '-' +
+    hex.slice(6, 8).join('') +
+    '-' +
+    hex.slice(8, 10).join('') +
+    '-' +
+    hex.slice(10, 16).join('')
+  );
+}
+
+export interface CreateCairnInput {
+  latitude: number;
+  longitude: number;
+  title?: string | null;
+  /** `null`/omitted means a PERSONAL cairn — public, gated by proximity alone. */
+  spaceId?: string | null;
+}
+
+/**
+ * Drops a cairn at a position and returns its id.
+ *
+ * A plain insert is correct here, and it is the ONLY direct client write left
+ * in the schema. 0004 backs it with both halves that a write needs:
+ *   - `grant insert on public.cairns to authenticated` — annotated in the file
+ *     as "the ONLY direct client write left". Without the grant the statement
+ *     is refused before any policy runs.
+ *   - policy "cairns insert own", `with check (created_by = auth.uid() and
+ *     (space_id is null or is_space_member(space_id)))`. So `created_by` must
+ *     be this session's user — it is not optional and it is not defaultable,
+ *     an insert omitting it fails the check rather than being filled in.
+ *
+ * TWO THINGS THE POLICY SET DOES NOT GIVE, both load-bearing here:
+ *   - No select policy on `cairns`, so `.insert(row).select()` FAILS. Hence the
+ *     id is minted client-side and returned from a variable, not read back.
+ *   - `radius_m` is left out entirely so the column default (30) applies.
+ *     Sending it would be a client deciding its own unlock radius.
+ */
+export async function createCairn(input: CreateCairnInput): Promise<string> {
+  const session = await ensureSession();
+
+  const id = newStoneId();
+
+  const { error } = await getSupabase().from('cairns').insert({
+    id,
+    lat: input.latitude,
+    lng: input.longitude,
+    title: input.title ?? null,
+    space_id: input.spaceId ?? null,
+    created_by: session.user.id,
+  });
+
+  if (error) throw toCairnApiError(error, 'cairns.insert');
+  return id;
+}
+
+/**
+ * Uploads a recording to `cairn-audio` at the key `stack_stone` is going to
+ * rebuild for itself, and returns that key.
+ *
+ * Delegates to `uploadToBucket()` rather than reimplementing the upload: RN
+ * cannot hand a `file://` URI to supabase-js as a Blob or as
+ * `{ uri, type, name }` — both "succeed" and write a 0-byte object, which
+ * passes every check except playback. That helper reads the file to base64 and
+ * decodes it to an ArrayBuffer with `base64-arraybuffer`, and refuses to
+ * upload zero bytes. `audio/mp4` is explicit because expo-audio writes `.m4a`
+ * and an object that lands as `application/octet-stream` will not play on iOS.
+ *
+ * The key is `storageKeys.stoneAudio()` and nothing else. `stack_stone`
+ * compares the path you pass it against its own derivation and raises
+ * 'audio path must be %' on a mismatch, so an upload to a hand-built key fails
+ * loudly at the RPC instead of becoming a stone that mysteriously will not
+ * play. Storage's own "cairn media insert" policy also requires the first path
+ * segment to be a uuid, which is what keeps clients out of `briefings/`.
+ */
+export async function uploadStoneAudio(
+  cairnId: string,
+  stoneId: string,
+  localAudioUri: string,
+): Promise<string> {
+  await ensureSession();
+
+  const key = storageKeys.stoneAudio(cairnId, stoneId);
+  try {
+    return await uploadToBucket(localAudioUri, 'cairn-audio', key, 'audio/mp4');
+  } catch (error) {
+    // Storage failures arrive as StorageError, not a Postgres error, so they
+    // classify as 'unknown' — which is honest. A 403 here means the "cairn
+    // media insert" policy rejected the key shape, not that the network died.
+    throw toCairnApiError(error, 'storage.cairn-audio');
+  }
+}
+
+/** What a completed drop leaves behind. */
+export interface DroppedCairn {
+  cairnId: string;
+  stoneId: string;
+  /** Storage object path. NOT playable — signing is CRN-005's Edge Function. */
+  audioPath: string | null;
+}
+
+export interface DropVoiceCairnInput {
+  /** Where the walker is standing. This becomes the cairn's position AND the proximity proof. */
+  position: LatLng;
+  /** `file://` URI from expo-audio. */
+  audioUri: string;
+  title?: string | null;
+  spaceId?: string | null;
+  transcript?: string | null;
+  /**
+   * Accepted and then dropped on the floor, deliberately. `stones` has no
+   * duration column and `stack_stone` has no parameter for one, so there is
+   * nowhere for this to go — persisting it means a migration plus a tenth
+   * argument on the RPC, not a change here. It is in the type because the
+   * recorder already knows the number and passing it costs nothing; the day
+   * the column exists, this is the one place that has to change.
+   */
+  durationMs?: number | null;
+}
+
+/**
+ * The whole drop, end to end: cairn, then stone id, then upload, then stone.
+ *
+ * ORDER, AND WHY IT IS THIS ONE. 0004's `stack_stone` takes `p_stone_id` and
+ * validates the media path against a key it rebuilds from `p_cairn_id` and
+ * that id. It does not return a path and it does not accept one on trust. So
+ * "call the RPC first to mint the id, then upload" is not an option the SQL
+ * offers — by the time the RPC returns, the row already carries a path, and
+ * there is no update policy on `stones` to correct it with (the old
+ * `stones update own` policy was deliberately dropped as a confused-deputy
+ * hole). The file says it in as many words: "Generate the row id on the client
+ * with crypto.randomUUID(), upload to the key derived from it, THEN call
+ * stack_stone(..., p_stone_id)." That is what this does.
+ *
+ * The upload deliberately goes BEFORE the RPC. A stone row whose object does
+ * not exist yet renders as a broken player; an object with no stone row
+ * renders as nothing at all. Failing in the harmless direction is the point.
+ *
+ * WHAT PARTIAL FAILURE LEAVES BEHIND, since this is three writes and not a
+ * transaction:
+ *   - createCairn throws  — nothing exists. Clean.
+ *   - upload throws       — an EMPTY cairn sits on the map with stone_count 0.
+ *                           Recoverable and worth recovering: keep `cairnId`
+ *                           and retry `stackVoiceStone()` against it rather
+ *                           than dropping a second cairn a metre away.
+ *   - stack_stone throws  — an ORPHAN OBJECT at {cairn}/{stone}.m4a, plus the
+ *                           empty cairn. Not recoverable automatically, and it
+ *                           does not need to be: with no stone row,
+ *                           cairn_detail never derives that path (it reads the
+ *                           column only for null-ness), so nothing can ever ask
+ *                           the signer for it. It is invisible garbage in a
+ *                           private bucket. A retry mints a NEW stone id and a
+ *                           new key; the old object is simply left. Do not
+ *                           reuse the failed stone id to "clean up" — the
+ *                           common cause of this branch is 'too far from cairn'
+ *                           after drifting mid-recording, and the fix for that
+ *                           is walking back, not deleting anything.
+ *
+ * Single-flight: a double-tapped drop button would otherwise plant two cairns
+ * a metre apart and stack one stone on each. Concurrent callers share the
+ * in-flight promise instead. Note what that means — a second call made while
+ * the first is still running gets the FIRST call's cairn id, whatever it
+ * asked for. That is right for a double tap and wrong for two genuinely
+ * different drops, which is a trade this app can make because a walker cannot
+ * be in two places at once. A retry after a failure is unaffected: the promise
+ * has settled and the slot is clear by then.
+ *
+ * Returns the cairn id, which is what the map needs to recentre and open the
+ * new cairn. Use `stackVoiceStone()` directly if you also need the stone id.
+ */
+export function dropVoiceCairn(input: DropVoiceCairnInput): Promise<string> {
+  return singleFlightDrop(async () => {
+    const cairnId = await createCairn({
+      latitude: input.position.latitude,
+      longitude: input.position.longitude,
+      title: input.title ?? null,
+      spaceId: input.spaceId ?? null,
+    });
+
+    await stackVoiceStone(cairnId, input);
+    return cairnId;
+  });
+}
+
+/**
+ * The stone half of `dropVoiceCairn`, split out so a failed upload can be
+ * retried against the cairn that already exists.
+ *
+ * Note the position goes to `stack_stone` unchanged. The cairn was just
+ * dropped at this exact point, so the server's re-derived distance is ~0 and
+ * comfortably inside the default 30m — but it is still the server's number,
+ * and drifting far enough between the two calls genuinely should fail.
+ */
+export async function stackVoiceStone(
+  cairnId: string,
+  input: Omit<DropVoiceCairnInput, 'title' | 'spaceId'>,
+): Promise<DroppedCairn> {
+  const stoneId = newStoneId();
+  const audioPath = await uploadStoneAudio(cairnId, stoneId, input.audioUri);
+
+  await stackStone({
+    cairnId,
+    kind: 'voice',
+    position: input.position,
+    stoneId,
+    audioPath,
+    transcript: input.transcript ?? null,
+  });
+
+  return { cairnId, stoneId, audioPath };
+}
+
+export interface DropTextCairnInput {
+  position: LatLng;
+  bodyText: string;
+  title?: string | null;
+  spaceId?: string | null;
+}
+
+/**
+ * The same flow with no upload in it: cairn, then stone. Two round trips, no
+ * storage, no key derivation, no `p_stone_id` — a text stone lets the server
+ * mint its own id, which is the branch `coalesce(p_stone_id, gen_random_uuid())`
+ * exists for.
+ *
+ * This is the fastest way to prove the loop end to end. If a text drop appears
+ * on the map and a voice drop does not, the fault is in the upload or the key,
+ * not in auth, the insert policy, the RPC or the proximity gate.
+ */
+export function dropTextCairn(input: DropTextCairnInput): Promise<string> {
+  return singleFlightDrop(async () => {
+    const body = input.bodyText.trim();
+    if (!body) {
+      throw new CairnApiError('Refusing to stack an empty text stone.', 'unknown', 'stack_stone');
+    }
+
+    const cairnId = await createCairn({
+      latitude: input.position.latitude,
+      longitude: input.position.longitude,
+      title: input.title ?? null,
+      spaceId: input.spaceId ?? null,
+    });
+
+    await stackStone({
+      cairnId,
+      kind: 'text',
+      position: input.position,
+      bodyText: body,
+    });
+
+    return cairnId;
+  });
+}
+
+/**
+ * One drop at a time, app-wide. Shared between the voice and text paths on
+ * purpose: they both plant a cairn, and two of those from one gesture is the
+ * failure that is embarrassing on stage rather than merely wrong.
+ */
+let inFlightDrop: Promise<string> | null = null;
+
+function singleFlightDrop(run: () => Promise<string>): Promise<string> {
+  if (inFlightDrop) return inFlightDrop;
+
+  const attempt = run().finally(() => {
+    inFlightDrop = null;
+  });
+  inFlightDrop = attempt;
+  return attempt;
 }
 
 // --- Errors -----------------------------------------------------------------
