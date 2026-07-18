@@ -2,7 +2,7 @@
 
 Seven tables, one SQL paste. This is the file [`CRN-002`](../tickets/) points at — run [the block below](#the-paste) in the Supabase SQL editor at 10:30 and do not hand-edit the schema again unless something is actually broken.
 
-Source of truth is [`PLAN.md`](../PLAN.md). Every column here maps to a line in its data model section, with one flagged exception ([`pins.unresolved`](#one-column-beyond-the-plans-list)).
+Source of truth is [`PLAN.md`](../PLAN.md). Every column here maps to a line in its data model section, with three flagged exceptions ([`pins.unresolved`, `stones.image_aspect_ratio`, `spaces.wordmark`](#three-columns-beyond-the-plans-list)).
 
 ---
 
@@ -37,6 +37,7 @@ create table if not exists public.spaces (
   id         uuid primary key default gen_random_uuid(),
   name       text not null,
   accent_hex text not null default '#D9A441',
+  wordmark   text,
   join_code  text not null unique check (join_code ~ '^[A-Z0-9]{6}$'),
   created_by uuid references public.profiles(id) on delete set null,
   created_at timestamptz not null default now()
@@ -72,6 +73,7 @@ create table if not exists public.stones (
   body_text  text,
   audio_url  text,
   image_url  text,
+  image_aspect_ratio numeric,
   transcript text,
   created_at timestamptz not null default now()
 );
@@ -171,6 +173,7 @@ Mirrors `auth.users` so stones can carry an author name without a join into the 
 | `id` | `uuid` PK | |
 | `name` | `text` not null | Header of the Nearby group and the Space chip on a cairn. |
 | `accent_hex` | `text` not null, default `#D9A441` | The per-Space accent from the plan. Cairn glyphs on the map tint to this. Defaulting to amber means an un-themed Space still looks intentional. |
+| `wordmark` | `text` | Short string, ≤ 24 chars, rendered in the Space header by `CRN-021`. Nullable; personal mode has no wordmark. |
 | `join_code` | `text` not null unique | The entire invite flow. Six chars, `^[A-Z0-9]{6}$` enforced. The unique constraint gives you the lookup index for free. |
 | `created_by` | `uuid` → `profiles.id` | Who to blame. Also seeds the first `space_members` row with role `owner`. |
 | `created_at` | `timestamptz` | |
@@ -214,6 +217,7 @@ One contribution to a cairn. The thread is `stones` ordered by `created_at` asce
 | `body_text` | `text` | The content of a `text` stone. **Gated** — this is user content. |
 | `audio_url` | `text` | Storage path of the recording. **Gated.** |
 | `image_url` | `text` | Storage path of the photo. **Gated.** |
+| `image_aspect_ratio` | `numeric` | Written at capture by `CRN-012`; `CRN-013` and `CRN-014` divide by it to lock the photo container. |
 | `transcript` | `text` | Filled by transcription on upload; pre-filled by the seed. Feeds "Brief me". **Gated.** |
 | `created_at` | `timestamptz` not null, default `now()` | Thread order and the "three months" in the demo. **The seed overrides this.** |
 
@@ -247,9 +251,15 @@ Why `check` and not `create type ... as enum`: adding a fourth kind at 14:00 is 
 
 Because coordinates are normalized, you never need to store image width or height, and you never need to know the display size at write time. Read the layout size at render, multiply, done.
 
-#### One column beyond the plan's list
+#### Three columns beyond the plan's list
 
 `pins.unresolved` is not in `PLAN.md`'s column listing, but demo cairn 2 requires "one unresolved flag in terracotta". A boolean is the cheapest way to get there and it costs nothing to carry. Flagged here so nobody thinks the schema drifted by accident. If you would rather not deviate, drop the column and encode it by convention — but then two people have to remember the convention, and one of them won't.
+
+`stones.image_aspect_ratio` is likewise absent from the plan's listing. `CRN-012` writes it at capture, and `CRN-013` and `CRN-014` divide by it to lock the photo container to the right shape before the image has loaded — without it the container reflows on load and every normalized pin lands in the wrong place for one frame. A single `numeric` avoids that, and it is the one piece of image geometry worth storing precisely because pin coordinates are normalized and nothing else needs dimensions.
+
+`spaces.wordmark` is the third. `CRN-021` renders it in the Space header — a short string, ≤ 24 characters, nullable, because personal mode has no wordmark. It is what makes a themed Space read as somebody's Space rather than a colour swap.
+
+All three ship in the 10:30 paste above. That is deliberate: three afternoon `ALTER TABLE`s are also three PostgREST schema-cache reloads and three chances to hit `column does not exist` in a ticket that was written against the old shape. Carrying them from the start costs nothing.
 
 ### `briefings`
 
@@ -280,7 +290,7 @@ Do not add anything else. Nothing here will be slow today.
 
 ## Storage: what `audio_url` and `image_url` actually hold
 
-They hold **object paths inside a private bucket**, not public URLs. `stones/<stone_id>.m4a`, `pins/<pin_id>.m4a`, `photos/<stone_id>.jpg`, `briefings/<cairn_id>.mp3`.
+They hold **object paths inside a private bucket**, not public URLs. Two buckets, per [`CRN-003`](../tickets/CRN-003-storage-buckets.md), which owns this layout: `cairn-audio` holds `{cairn_id}/{stone_id}.m4a` (voice stones), `{cairn_id}/{stone_id}/{pin_id}.m4a` (pin notes) and `briefings/{cairn_id}.m4a` (briefing audio, keyed by `cairn_id` — there is no `briefing_id`). `cairn-images` holds `{cairn_id}/{stone_id}.jpg`.
 
 If the bucket is public, the proximity gate protects only the *discovery* of the path — the object itself is fetchable by anyone who has it. With a private bucket, the path is disclosed by the gated RPC and the client exchanges it for a short-lived signed URL. Paths are UUID-derived and therefore unguessable, which is the honest limit of what you can do in six hours: it is not a capability system, but it does mean the network payload for a far-away cairn contains nothing playable. That is the property a judge is checking.
 
@@ -324,7 +334,15 @@ RPC bodies live in the server-side gate ticket, not here. `distance_m()` is in t
 
 ## What the seed writes directly
 
-Seeding (`CRN-026`, `CRN-027`) runs with the **service_role** key from a Node script, not from the app. service_role bypasses RLS, which is the entire reason it can do this. Never let that key near the client bundle.
+Seeding happens three different ways, and conflating them wastes time at 12:30:
+
+| What | How | Why that way |
+|---|---|---|
+| The four route cairns (`CRN-026`) | **Through the app**, on a physical device, using the drop flow (`CRN-009`) and upload (`CRN-011`) | The coordinates and audio have to be real, captured on site. Seeding these through SQL would skip the one dress rehearsal that finds `CRN-011` bugs while there is still time to fix them. |
+| The eleven-stone Space cairn (`CRN-027`) | **SQL editor**, service_role, from a re-runnable `supabase/seed/space-cairn.sql` | Eleven stones from four authors backdated across three months cannot be produced by walking around. It must be re-runnable so a botched demo state is one paste away from clean. |
+| The four demo accounts (`CRN-004`) | **Node script**, service_role | Creating `auth.users` rows needs the admin API, not the SQL editor. |
+
+service_role bypasses RLS, which is the entire reason the latter two can write what they write. Never let that key near the client bundle — it goes in a local script or the SQL editor, never in Expo, never in `EXPO_PUBLIC_*`.
 
 Columns the seed sets explicitly rather than letting defaults handle:
 

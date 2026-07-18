@@ -36,7 +36,7 @@ So: the buckets are private, clients never hold a durable object URL, and the on
    - `select` granted to **nobody**. Not authenticated, not anon.
    - Optionally `update`/`delete` limited to `owner = auth.uid()` so a retry can overwrite a half-uploaded object.
 4. A single shared upload helper in the app that takes a local file URI, a bucket and a key, and returns the storage path. Both `CRN-011` and `CRN-012` call it. Set `contentType` explicitly and `upsert: true`.
-5. Confirm the server-side signing path works: with the service key, mint a signed URL for an uploaded object with a short TTL (60s is plenty) and fetch it. `CRN-005` owns wiring this into the gate; this ticket proves the mechanism.
+5. Confirm the server-side signing path works: with the service key, mint a signed URL for an uploaded object with a short TTL (60s) — this step only proves the signing mechanism; the production value is `CRN-005`'s 3600 — and fetch it. `CRN-005` owns wiring this into the gate; this ticket proves the mechanism.
 
 ## Acceptance criteria
 
@@ -60,6 +60,6 @@ The proximity check itself and the Edge Function that mints signed URLs on deman
 - `expo-audio` on iOS writes to a temporary cache directory and the returned URI includes the `file://` scheme. Strip or keep the scheme according to what your file-read API expects, and copy or upload before anything clears the cache.
 - Storage policies live on `storage.objects`, a table you do not own — write them in SQL in the same migration style as `CRN-002` rather than clicking through the dashboard, so they are in the repo. `bucket_id = 'cairn-audio' and auth.role() = 'authenticated'` is the shape of the insert policy.
 - Signed URLs are created with the **service key inside an Edge Function**, never in the app. If the app can mint its own signed URLs, the gate is client-side again and `CRN-005` was pointless.
-- Keep signed-URL TTLs short — 60 to 300 seconds. Long enough to stream a 60-second voice note, short enough that a URL scraped from the network inspector is dead before the judge finishes typing it.
+- Signed-URL TTL is **3600 seconds**, set in `CRN-005` which owns that number — long enough to survive the rehearsal-to-pitch gap `CRN-028` warns about. The gate protects path discovery, not the object.
 - The key convention requires the `stone_id` to exist before the upload. Insert the `stones` row first, get the uuid back, then upload to that path, then update the row with the path. If you upload first you will end up generating client-side uuids and reconciling them, which is fifteen minutes you do not have.
 - Upload failures in RN often surface as an unhelpful `Network request failed`. Check bucket name spelling and the session before you go looking for anything more interesting.

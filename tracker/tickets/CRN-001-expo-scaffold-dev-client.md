@@ -17,7 +17,7 @@ blocks: [CRN-006, CRN-010]
 
 ## Why this exists
 
-`@rnmapbox/maps` ships native code. Expo Go cannot load it — not with a flag, not with a workaround. The app must be prebuilt into a custom dev client before anyone can write a line of feature code. Every map ticket (`CRN-006`), the live position hook (`CRN-008`) and the cairn glyph layer (`CRN-010`) sit behind this.
+`@rnmapbox/maps` ships native code. Expo Go cannot load it — not with a flag, not with a workaround. The app must be prebuilt into a custom dev client before anyone can write a line of feature code. Every map ticket (`CRN-006`), the live position hook (`CRN-008`) and the hold-to-record waveform (`CRN-010`) sit behind this.
 
 The failure mode is not "this ticket is late." The failure mode is that the Mapbox native SDK download 401s at 10:50, someone spends fifty minutes on tokens, and the map first renders at 12:15 with the whole day shifted behind it. **If it is 11:00 and a map has not rendered on a real device, stop what you are doing and put a second person on it.**
 
@@ -43,7 +43,7 @@ The failure mode is not "this ticket is late." The failure mode is that the Mapb
 
 ## Not in this ticket
 
-Contour styling and the custom map style (`CRN-006`). Live user position and the follow camera (`CRN-008`). Cairn glyphs (`CRN-010`). Supabase client wiring beyond installing the package. Auth. Anything Android — `npx expo prebuild --platform ios` only, and if someone runs a bare `prebuild` and generates an `android/` folder, delete it.
+Contour styling and the custom map style (`CRN-006`). Live user position and the follow camera (`CRN-008`). Cairn glyphs (`CRN-007`). Hold-to-record and the waveform (`CRN-010`). Supabase client wiring beyond installing the package. Auth. Anything Android — `npx expo prebuild --platform ios` only, and if someone runs a bare `prebuild` and generates an `android/` folder, delete it.
 
 ## Notes & traps
 

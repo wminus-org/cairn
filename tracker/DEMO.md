@@ -22,6 +22,8 @@ Four cairns, walked in order, phone mirrored to the screen. Total budget **5:20*
 
 If you are running long, cairn 2 loses the text pin and nothing else. Never shorten cairn 3.
 
+This table is the single source of truth for demo timing: 5:20 target, 5:40 hard ceiling. CRN-029's script card takes its beats and running totals from here, not the other way round. If the confirmed slot is shorter than 5:50, cut cairn 2's text pin first and re-time.
+
 ---
 
 ### Cairn 1 — Outside the entrance
@@ -108,7 +110,7 @@ When it ends, one line, then walk:
 
 > "That's the site history. Spoken, hands free, standing at the thing."
 
-**Has to work:** CRN-023 (**Brief me**, cached — see below), CRN-016 (thread), CRN-027 (eleven stones seeded), CRN-020 (Space visibility), CRN-005. CRN-021 (theming) is polish; its absence is invisible.
+**Has to work:** CRN-023 (**Brief me**, cached — see below), CRN-016 (thread), CRN-027 (eleven stones seeded), CRN-005. CRN-020 (Space visibility) and CRN-021 (theming) are both cuttable: if Spaces are cut at 14:00 the demo account is a hardcoded member, the cairn still renders, and the invisibility line becomes a claim you say rather than a thing you show — say it, do not try to demonstrate it.
 
 **Fails gracefully to:** the briefing summary text is on screen even if TTS stalls. See "when it breaks."
 
@@ -223,7 +225,7 @@ The rule, and it is the only rule here: **you never announce a failure the room 
 Switch to **Nearby** (CRN-024) and keep walking. Do not comment on it, do not go back and try the map again. Nearby is sorted by distance and grouped by Space — it makes exactly the same argument, and the room has no idea it was second choice.
 
 **GPS is wrong indoors.**
-Demo mode (CRN-025), toggled **before you walk on**, not during. Decide at 15:00, based on what the rehearsals actually did indoors — if any of the three runs put you at the wrong cairn, you run the whole demo in demo mode, including cairn 1 outdoors. Consistency beats authenticity here. Toggling on stage is how you end up in the settings screen on a mirrored display.
+Demo mode (CRN-025), toggled **before you walk on**, not during. Decide at 15:00, based on a real walk of the route at 15:00 with CRN-025 already built and tested — if the real distance at any cairn will not come inside its `radius_m`, you run the whole demo in demo mode, including cairn 1 outdoors. If a rehearsal run later contradicts the 15:00 call, the rehearsal wins. Consistency beats authenticity here. Toggling on stage is how you end up in the settings screen on a mirrored display.
 
 **Brief me is slow.**
 It is cached — the briefing for cairn 3 is generated and stored before the demo, so the button is a fetch, not a generation. If it stalls anyway, **keep talking** and let it arrive:

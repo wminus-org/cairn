@@ -34,7 +34,7 @@ Feature 1 in the plan, and the first half of the 11:45 milestone. A cairn is the
 - [ ] Long-pressing an empty patch of map opens the confirm sheet, and the coordinate shown to 5 decimal places matches the pressed point to within one glyph width.
 - [ ] Dropping with the title field left empty succeeds and the cairn renders — `title` is nullable end to end.
 - [ ] A cairn dropped to "Personal" has `space_id IS NULL` in the Supabase table editor; one dropped into a Space carries that Space's id.
-- [ ] `select distinct radius_m from cairns` returns exactly one row: `30`.
+- [ ] A cairn dropped through the app has `radius_m = 30` in its own row. Do not assert this table-wide — the 12:30 seed deliberately raises `radius_m` to 60–80 on the indoor demo cairns, and every render path reads the column per cairn.
 - [ ] Drop at current position, then compare the row's `lat`/`lng` against the coordinate the position hook is reporting. They match. Swapped values land the cairn in the wrong hemisphere and are obvious on the map.
 - [ ] Immediately after Drop, before any recording, the cairn is visible on the map. A zero-stone cairn must not vanish.
 - [ ] There is no "move to Space" or "change owner" affordance anywhere in the cairn detail view.

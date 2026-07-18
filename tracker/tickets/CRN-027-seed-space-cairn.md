@@ -63,7 +63,7 @@ Keep the seed in a re-runnable file (`supabase/seed/space-cairn.sql`) with hard-
 - [ ] "Brief me" produces a summary that names, unprompted: the overflow is driven by heavy afternoon occupancy; the pump is a temporary fix; **the warranty claim is unfiled and expires in October**. If the October deadline does not survive the synthesis, the seed content is the problem, not the prompt.
 - [ ] The cairn's glyph on the map is visibly taller than the single-stone cairn 1 from `CRN-026` — the stone-count height from `CRN-007` reading as terrain is half the point of stacking eleven.
 - [ ] Standing 150m away, the network response for this cairn contains no transcript text and no audio URL. Grep the response body for the word "warranty" — zero hits.
-- [ ] A non-member account standing in the meeting room sees nothing at all on the map at this coordinate — not a locked marker, nothing.
+- [ ] `select space_id from cairns where id = <cairn 3>` returns the seeded Space UUID, and `select count(*) from space_members where space_id = <space>` returns 4 including the demo account. (Whether a non-member sees nothing is `CRN-020`'s criterion, not this ticket's — it may be cut.)
 - [ ] Re-running the seed file twice leaves 11 stones, not 22.
 
 ## Not in this ticket

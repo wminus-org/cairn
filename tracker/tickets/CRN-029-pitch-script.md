@@ -23,25 +23,29 @@ Mirroring is in this ticket because it is a real task with a real failure mode, 
 
 ## Scope
 
-**The script.** One card, timed, written for a 5-minute slot. Confirm the actual slot length first and scale the walk, not the last forty seconds.
+**The script.** One card, timed. The beats and running totals below are copied from [`DEMO.md`](../DEMO.md), which is the single source of truth for demo timing — **5:20 target, 5:40 hard ceiling.** If those two files ever disagree, `DEMO.md` is right and this card is stale.
+
+Confirm the actual slot length before anything else. The card needs a slot of **5:50 or longer**. If the confirmed slot is shorter, cut cairn 2's text pin first and re-time — scale the walk, never the last forty seconds.
 
 | Time | Where | What happens |
 |---|---|---|
-| 0:00–0:15 | Cairn 1, outside the entrance | Press play. Say nothing. Let the voice note run. |
-| 0:15–0:35 | Same spot | **Consumer line, verbatim.** One clause on the mechanic, then start walking. |
-| 0:35–1:35 | Walking | The map is on screen: distance number falling, preview resolving. One sentence: the preview sharpens because you are getting closer. Walking is the loading bar. |
-| 1:35–2:35 | Cairn 2, corridor/stairwell | Photo with three pins. Hold the phone up beside the actual radiator/panel so the room sees both. Point at the terracotta unresolved pin. **Team line, verbatim.** |
-| 2:35–3:35 | Cairn 3, meeting room | Setup in one sentence: eleven stones, four people, three months. Press **Brief me**. Then stop talking for the whole 25 seconds. |
-| 3:35–4:20 | Cairn 4, the stage | The cairn addressed to the judges, dropped this morning. It plays because they are standing here and for no other reason. |
-| 4:20–5:00 | Standing still, phone down | **VC line, verbatim.** The only place the words construction, facilities, field service, property appear. One market number, one source. Stop. |
+| 0:00–0:20 | Walking on | Opening line, phone already mirrored and showing the map. |
+| 0:20–0:55 | Cairn 1, outside the entrance | Press play. Say nothing for the fifteen seconds it runs. Then the **consumer line, verbatim.** |
+| 0:55–1:15 | Walk to the corridor | Distance number falling, preview sharpening. One sentence: walking is the loading bar. |
+| 1:15–2:25 | Cairn 2, corridor/stairwell | Photo with three pins. Hold the phone up beside the actual radiator/panel so the room sees both. Point at the terracotta unresolved pin. **Team line, verbatim.** |
+| 2:25–2:45 | Walk to the meeting room | Set it up in one sentence: eleven stones, four people, three months. |
+| 2:45–4:00 | Cairn 3, meeting room | Press **Brief me**. Then stop talking for the whole 25 seconds. |
+| 4:00–4:15 | Walk back to the stage | Say nothing. Let the room absorb it. |
+| 4:15–4:40 | Cairn 4, the stage | The cairn addressed to the judges, dropped this morning. It plays because they are standing here and for no other reason. |
+| 4:40–5:20 | Standing still, phone down | **VC line, verbatim.** The only place the words construction, facilities, field service, property appear. One market number, one source. Stop. |
 
 **The three lines, verbatim from the plan.** Read them off the card; do not paraphrase.
 
-- Said at **0:15**, at cairn 1:
+- Said at **0:40**, at cairn 1, once the voice note has finished playing:
   > Cairn lets you leave your voice somewhere, so it's only heard by whoever stands there next.
-- Said at **2:15**, at cairn 2, with the pinned photo on screen:
+- Said at **2:00**, at cairn 2, with the pinned photo on screen:
   > Cairn pins your team's knowledge to the physical thing it's about. Stand in front of the valve, hear everything anyone has ever said about that valve.
-- Said at **4:20**, standing still, phone down:
+- Said at **4:40**, standing still, phone down:
   > Every company with people in the field has institutional memory that only exists as photos in a group chat. We attach it to the location instead, and it unlocks when you're there.
 
 **The market number.** Pick one defensible figure with a nameable source, write it into the card before 16:00, and say the source in the same breath. It has to survive "where's that from?".
@@ -59,7 +63,8 @@ Resolve the walking-versus-tethered conflict explicitly: either AirPlay works on
 
 ## Acceptance criteria
 
-- [ ] The script exists as a single card, readable at arm's length, with a time marker on every beat and total runtime ≤ slot length minus 30 seconds.
+- [ ] The script exists as a single card, readable at arm's length, with a time marker on every beat, and its beats match [`DEMO.md`](../DEMO.md) exactly — 5:20 total, 5:40 ceiling.
+- [ ] The confirmed slot is 5:50 or longer. If it is not, cairn 2's text pin has been cut and the card re-timed, and the new total is still at least 30 seconds under the slot.
 - [ ] The three positioning lines appear character-for-character as in `PLAN.md` — diff them, do not eyeball them — each with an explicit stage direction naming where it is said.
 - [ ] Searching the script for `construction`, `facilities`, `field service`, `property` and the market number returns zero hits before the 4:20 marker.
 - [ ] Searching the spoken lines for `Supabase`, `Mapbox`, `Edge Function`, `RLS`, `React Native`, `API` returns zero hits.
@@ -74,8 +79,8 @@ Resolve the walking-versus-tethered conflict explicitly: either AirPlay works on
 ## Not in this ticket
 
 - Running the rehearsals or the freeze checklist — CRN-028.
-- Seeding the four cairns and their contents — CRN-027.
-- Building or wiring the demo-mode override — CRN-026. The script may never say the words "demo mode".
+- Seeding the four cairns and their contents — CRN-026.
+- Building or wiring the demo-mode override — CRN-025. The script may never say the words "demo mode".
 - Slides. There are no slides.
 
 ## Notes & traps

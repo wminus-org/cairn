@@ -29,7 +29,7 @@ Terracotta for unresolved is the other half: demo cairn 2 has an unresolved flag
 - Tap a pin: a card animates up from the bottom with the note text, author, and timestamp; its audio starts playing.
 - Torch: a full-brightness copy of the image, clipped to a circle centered on the selected pin, composited over the dimmed base.
 - Tapping the same pin again, or outside the card, deselects: card down, torch off, uniform dim returns, playback stops.
-- Add `unresolved boolean not null default false` to `pins` if CRN-003 didn't include it. Nothing in the capture UI sets it; the seeded demo pin does.
+- `pins.unresolved` already exists — it is in CRN-002's 10:30 paste. Nothing in the capture UI sets it; the seeded demo pin does.
 
 ## Acceptance criteria
 

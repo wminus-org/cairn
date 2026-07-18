@@ -87,14 +87,14 @@ Body text is left-aligned. Always. Nothing is centered except a single-line empt
 
 ## Distance mechanic — rendering spec
 
-The gate is enforced on the server (see the working rules in `../README.md`). This section is only about how the *rendering* tracks the user's distance. The client never blurs data it should not have — it blurs a deliberately low-fidelity payload the server is willing to give anyone.
+The gate is enforced on the server (see the working rules in `../README.md`). This section is only about how the *rendering* tracks the user's distance. The client never blurs data it should not have — in the Approach band it holds no real audio, image or text at all, and blurs a stack it synthesised itself from the stone `id`. The server has exactly two trust states, withheld and released; there is no degraded derivative in between.
 
 ### Bands
 
 | Band | Distance `d` | Client has | Renders |
 |---|---|---|---|
 | **Far** | `d > 200m` | position, stone count, kind | Glyph + distance number. Nothing else |
-| **Approach** | `30m ≤ d ≤ 200m` | + coarse amplitude array (24 buckets), 16px-wide photo thumb | Blurred waveform, pixelated thumb, sharpening continuously |
+| **Approach** | `30m ≤ d ≤ 200m` | + per-stone stubs only (`id`, `kind`, `author_name`, `created_at`, `pin_count`). No audio, no image, no transcript. The 24-bucket stone stack is synthesised client-side from the stone `id`. | Blurred synthesised waveform, photo skeleton, sharpening continuously |
 | **At** | `d < 30m` | + `audio_url`, `transcript`, full `image_url`, pin notes | Full resolution, autoplay |
 
 `cairns.radius_m` defaults to 30. Read it per cairn; do not hardcode 30 in the render path. The 200m outer edge is a constant.
@@ -111,14 +111,13 @@ t = clamp((200 - d) / (200 - radius_m), 0, 1)
 |---|---|---|---|
 | Blur (expo-blur `intensity`, 0–100) | 90 | 0 | `round(90 * (1 - t))` |
 | Waveform opacity | 0 | 1 | `clamp(t * 8.5, 0, 1)` — fades in over 200 → 180m |
-| Photo sample width (px, upscaled to fit) | 16 | 320 | `round(16 + t * 304)` |
 | Distance number opacity | 1 | 0.4 | `1 - 0.6 * t` |
 
 The waveform opacity ramp exists so crossing 200m is a fade, not a pop. There must be no visible discontinuity at either band boundary — if you can see the moment you cross 200m or 30m as a jump, the mechanic reads as a state machine instead of as walking.
 
 ### Photo pixelation
 
-Do not blur the real image. At capture time, upload a **16px-wide JPEG thumbnail** alongside the original. The Approach band renders that 16px file scaled up to the card width with `resizeMode: 'cover'` and nearest-neighbour-ish upscaling; the sample-width formula above is achieved by swapping to progressively larger pre-generated thumbs only if you have them, otherwise hold the 16px thumb and let blur carry the interpolation. The full `image_url` is absent from the payload until `d < radius_m`.
+There is no thumbnail. CRN-012 uploads one JPEG and the server withholds `image_url` entirely until `d < radius_m` — so in the Approach band there is no photo to pixelate. Render the photo slot as a contour-at-20% skeleton in the stone's `image_aspect_ratio`, under the same blur curve as the waveform. Blur is a rendering treatment, never a fetch decision.
 
 ### GPS behaviour
 
@@ -164,7 +163,7 @@ Recording is capped at **60s**. At 55s, the column tints toward terracotta.
 
 ### As a preview on a stone card
 
-A horizontal run of short stacks built from the server's 24-bucket amplitude array.
+A horizontal run of short stacks built from a 24-bucket amplitude array the client synthesises deterministically from the stone `id` (same id, same stack, every device, every render). The server sends no amplitude data — see [`../tickets/CRN-005-proximity-gate-rpc.md`](../tickets/CRN-005-proximity-gate-rpc.md).
 
 | Property | Value |
 |---|---|

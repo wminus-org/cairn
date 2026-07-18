@@ -26,21 +26,22 @@ A cairn is a conversation held at a coordinate over time, and the thread is the 
 - Stones fetched through the proximity-gated read from CRN-005. The client sends its position; the server decides what comes back. No filtering in JS.
 - Vertical order: newest stone at the top of the screen, oldest at the bottom. Stones stack upward, like the object.
 - Each row: author `display_name`, mono 11pt letterspaced timestamp (absolute, e.g. `12 APR · 09:14` — the three-month spread must be visible), and a kind-specific body:
-  - **voice** — the stone-stack waveform from CRN-011, tap to play inline, single player at a time.
+  - **voice** — the stone-stack waveform from CRN-010, tap to play inline, single player at a time — and the stone's `transcript` beneath the waveform in `small` at 60% opacity when non-null. This is DEMO.md's stated fallback when audio does not play.
   - **photo** — thumbnail with a pin count badge; tap opens the photo pin view (CRN-014).
   - **text** — the body text, no chrome.
-- Proximity rendering per the E3 tiers: >200m the thread is not reachable (glyph + distance only); 200m→30m waveforms and thumbnails render blurred/pixelated and playback is disabled; <30m full resolution and the newest voice stone autoplays once on entry.
+- Proximity rendering per the E3 tiers: >200m the thread is not reachable (glyph + distance only); 200m→`radius_m` the synthesised stone stacks render blurred and playback is disabled (no image is present to pixelate); inside `radius_m` full resolution and the newest voice stone autoplays once on entry.
 - Empty state for a cairn with zero stones: a single line, no illustration.
 
 ## Acceptance criteria
 
-- [ ] Opening the eleven-stone demo cairn from inside 30m renders eleven rows, four distinct author names, timestamps spanning roughly three months, in one scroll.
+- [ ] Opening the eleven-stone demo cairn from inside its `radius_m` renders eleven rows, four distinct author names, timestamps spanning roughly three months, in one scroll.
 - [ ] The bottom-most stone is the oldest by `created_at` and the top-most is the newest; verified against the row order in the Supabase table editor.
 - [ ] Voice, photo, and text stones each render with their own body treatment in the same thread — screenshot the demo cairn and all three are visible.
 - [ ] Tapping a voice stone plays it; tapping a second voice stone while the first is playing stops the first — no overlapping audio.
 - [ ] Playback is audible with the iPhone hardware mute switch flipped to silent.
-- [ ] Standing 150m from the cairn, waveforms render visibly blurred, no play control is active, and the network response for the thread fetch contains no `audio_url`, no `image_url`, and no `transcript` values — checked in the network inspector, not in the UI.
-- [ ] Standing inside 30m, the same fetch returns those fields populated and the newest voice stone autoplays exactly once.
+- [ ] With the phone speaker muted, every voice stone on the demo cairn still shows readable transcript text without tapping anything.
+- [ ] Standing 150m from the cairn — outside `radius_m`, inside the 200m band — waveforms render visibly blurred, no play control is active, and the network response for the thread fetch contains no `audio_url`, no `image_url`, and no `transcript` values — checked in the network inspector, not in the UI.
+- [ ] Standing inside the cairn's `radius_m` (60–80m on the seeded meeting-room cairn, not 30m), the same fetch returns those fields populated and the newest voice stone autoplays exactly once.
 - [ ] Every row shows a non-empty author name. No row reads `null`, `undefined`, or a raw UUID.
 - [ ] Tapping a photo stone opens CRN-014 with that stone's pins already loaded.
 

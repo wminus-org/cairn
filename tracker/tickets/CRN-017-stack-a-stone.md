@@ -39,15 +39,14 @@ Stacking is the collaborative act the whole vocabulary is built around; without 
 - [ ] Calling the insert function directly with coordinates 4km from the cairn (curl or the Supabase SQL editor, same authenticated user) returns an error and inserts nothing. Row count before and after is identical.
 - [ ] Calling the insert function as a user who is not a member of the cairn's Space returns an error and inserts nothing, even with correct coordinates.
 - [ ] Calling with an `author_id` in the payload set to another user's id produces a row owned by the caller, not the spoofed id — or is rejected. It never attributes the stone to someone else.
-- [ ] A direct `insert into stones` from an authenticated client, bypassing the function, is refused by RLS.
 - [ ] Text and photo stones can both be stacked and render correctly in the CRN-016 thread without a reload.
 - [ ] The glyph for that cairn on the map is one stone taller after the map is next read.
 - [ ] Killing the network mid-upload leaves the thread readable, shows a terracotta failure line, and does not leave a permanent phantom stone.
 
 ## Not in this ticket
 
-- Creating a new cairn — that is the drop flow, CRN-010's neighbours in E2.
-- Placing pins on a photo stone — CRN-014 owns pin creation.
+- Creating a new cairn — that is the drop flow, CRN-009.
+- Placing pins on a photo stone — CRN-013 owns pin creation; CRN-014 is the read-only viewer.
 - The thread rendering itself — CRN-016.
 - Editing or deleting a stone after it lands. Explicitly out of scope per the plan.
 - Notifying other members that a stone was added. Out of scope, and push is a two-hour hole.
@@ -55,9 +54,9 @@ Stacking is the collaborative act the whole vocabulary is built around; without 
 ## Notes & traps
 
 - **Read access is not write access.** Proximity for reads is enforced in CRN-005; that function's checks do not apply to inserts. A client that legitimately fetched a cairn's position from the map now holds the id and could POST to it from anywhere. The write path needs its own membership and distance checks or the gate has a hole shaped like the entire product.
-- **RLS alone cannot do this.** An `INSERT` policy on `stones` can check `auth.uid()` and Space membership, but the device's current position does not exist in the database, so no policy can see it. Proximity has to arrive as a function argument. Therefore: keep the RLS insert policy restrictive (or absent), `revoke insert on stones from authenticated`, and make the `SECURITY DEFINER` function the only way in. If both paths work, the loose one is the one that ships.
+- **RLS alone cannot do this.** An `INSERT` policy on `stones` can check `auth.uid()` and Space membership, but the device's current position does not exist in the database, so no policy can see it. Proximity has to arrive as a function argument. Therefore: leave CRN-011's narrow insert policy in place; `stack_stone` is the path the thread UI uses so the distance check runs, and the policy is the floor that stops cross-Space inserts.
 - **`SECURITY DEFINER` needs a pinned `search_path`.** Set it explicitly (`set search_path = public, pg_temp` in the function definition) or Supabase's linter flags it and, worse, the function can be tricked into resolving the wrong table.
-- **Skip PostGIS.** Enabling and reasoning about the extension costs more than it saves at 14:30. Write the haversine inline in plpgsql against `lat`/`lng` doubles with an earth radius of 6371000. Guard against `null` coordinates — a cairn seeded without a position must fail closed, not compute `NaN` and pass.
+- **Skip PostGIS.** Enabling and reasoning about the extension costs more than it saves at 14:30. Do not hand-roll the maths either. `public.distance_m(lat1, lng1, lat2, lng2)` already exists from CRN-002's paste and is what CRN-005 calls — use `public.distance_m(c.lat, c.lng, p_lat, p_lng) > c.radius_m` as the reject condition so reads and writes can never disagree about where you are standing. Guard against `null` coordinates — a cairn seeded without a position must fail closed, not compute `NaN` and pass.
 - **The client can lie about its coordinates, and that is acceptable today.** The requirement is that the decision is made on the server, not that GPS is unspoofable. Say that out loud if a judge asks rather than claiming more than the design delivers — attestation is a real answer for a real product and a wrong answer for a hackathon.
 - **Foreground location only.** Use `expo-location`'s foreground permission and read the position at the moment of the insert, not a value cached when the screen mounted. Background location is explicitly out of scope and will eat two hours. Request the permission before the user holds to record, not after — an iOS permission dialog appearing mid-hold cancels the gesture and loses the recording.
 - **Demo mode must feed this function too.** If the venue's GPS is bad indoors and position is overridden along a fixed route, the override has to flow into the coordinates sent to the insert RPC, or stacking fails on stage while reading works. Check this during the 15:00 demo-mode decision, not at 16:25.

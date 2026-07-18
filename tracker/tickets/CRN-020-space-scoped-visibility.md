@@ -27,7 +27,7 @@ The plan states it in one sentence: *"Space cairns are invisible to non-members 
   - `space_id in (select space_id from space_members where user_id = auth.uid())`.
 - The predicate runs before proximity. A non-member is filtered out at any distance including zero.
 - No `select` policy on `cairns`. Default-deny stays; the membership predicate lives in the RPC body only, once. A client bypassing the RPC gets `[]` because nothing is directly readable — which is the same outcome, with one copy of the rule.
-- The map query is driven by the active Space plus the personal collection. Cairn drop (CRN-011-era capture flow) writes `space_id` from the active Space, or `null` when the user is in personal mode.
+- The map query is driven by the active Space plus the personal collection. Cairn drop (CRN-009) writes `space_id` from the active Space, or `null` when the user is in personal mode.
 - Stone counts, titles and coordinates for Space cairns are subject to the same rule. Membership gates everything; proximity gates only media and transcripts.
 
 ## Acceptance criteria

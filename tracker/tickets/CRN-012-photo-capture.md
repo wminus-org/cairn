@@ -27,7 +27,7 @@ The aspect ratio is not decoration. CRN-013 divides by the rendered frame to nor
 - Downscale before upload: longest edge 1280px, JPEG quality ~0.7. Unconditional — no "only if it's big" branch.
 - Upload the compressed bytes to the private `cairn-images` bucket at `{cairn_id}/{stone_id}.jpg` — the bucket name and key convention CRN-003 defines. Do not invent a second layout.
 - Insert a `stones` row with `kind = 'photo'`, `image_url` = the **storage path**, and the image's aspect ratio.
-- Add `image_aspect_ratio numeric` to `stones` — the plan's seven-table model doesn't have it. One `ALTER TABLE`, coordinated with whoever owns CRN-003.
+- `stones.image_aspect_ratio numeric` already exists — it ships in CRN-002's 10:30 paste. Do not `ALTER TABLE`; just write to it.
 - Handle permission denial with an in-app explanation and a link to Settings.
 - On success, hand the new stone id straight to CRN-013's pin editor. Do not bounce back to the map.
 

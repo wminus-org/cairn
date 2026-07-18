@@ -60,6 +60,6 @@ If it is 14:00 and this is not working, Spaces get cut and this gets finished. P
 - **Clamp and reject, don't round.** Drop taps that normalize outside 0–1. Store the full float — rounding to two decimals moves a pin ~1% of the image width, which is several centimetres on a valve.
 - **`expo-audio`, not `expo-av`.** `expo-av` is deprecated. The current API is hook-based (`useAudioRecorder` with `RecordingPresets`, plus `AudioModule` and `setAudioModeAsync`); verify the exact exports against the installed version rather than trusting memory.
 - **iOS audio mode is a mode, and it is sticky.** You must request recording permission and set the audio mode to allow recording before `record()`. Leaving `allowsRecording: true` set afterwards makes subsequent playback quiet and routes it to the earpiece — clear it after `stop()`. Set `playsInSilentMode: true` while you are in there.
-- **Reuse the hold-to-record component from CRN-009.** Do not write a second recorder at 13:40. The stack-of-stones waveform already exists.
+- **Reuse the hold-to-record component from CRN-010.** Do not write a second recorder at 13:40. The stack-of-stones waveform already exists.
 - **`pins` has no ordering column** and does not need one — number them by `created_at` ascending at render time, `index + 1`. Do not add a column now.
 - **Pin audio uploads hit the same 0-byte Blob trap as CRN-012.** Base64 → `ArrayBuffer` → `.upload()` with an explicit `contentType`.

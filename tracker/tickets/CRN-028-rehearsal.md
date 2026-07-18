@@ -43,7 +43,7 @@ The freeze is the other half of the same ticket. After 15:30 every code change h
 
 - **Cold start.** Force-quit the app and relaunch. A demo that only works on a warm app is not a demo. Do this at the top of run 2.
 - **Network.** Run once on venue wifi and once on LTE. Toggle airplane mode on and off before a run and confirm the app recovers rather than sitting on a dead map.
-- **Demo mode both ways.** Run the route with demo mode (CRN-026) **off**, on real GPS, and once with it **on**. Both must reach all four cairns. Know which switch you are flipping and where it lives on screen.
+- **Demo mode both ways.** Run the route with demo mode (CRN-025) **off**, on real GPS, and once with it **on**. Both must reach all four cairns. Know which switch you are flipping and where it lives on screen.
 - **Mirroring**, on the venue's actual screen and actual cable — mechanics and fallbacks are CRN-029, but the confirmation happens here, during a real run.
 
 **The three runs.**
@@ -75,8 +75,8 @@ Every run is the whole route: entrance cairn → corridor/stairwell photo-pin ca
 ## Not in this ticket
 
 - The words, the timing, and the mirroring hardware — CRN-029.
-- Seeding the four cairns and their content — CRN-027.
-- Building or wiring the demo-mode override — CRN-026.
+- Seeding the four cairns and their content — CRN-026 and CRN-027.
+- Building or wiring the demo-mode override — CRN-025.
 - Fixing anything found during rehearsal. That is the point of the ticket.
 
 ## Notes & traps

@@ -24,7 +24,7 @@ It is also the entire B2B argument compressed into one interaction: the institut
 ## Scope
 
 - A **Brief me** button on the cairn detail / stone thread surface (CRN-016), visible when the cairn is unlocked and has ≥3 stones.
-- An Edge Function `brief` that takes a `cairn_id`, proves the caller's proximity server-side, and returns `summary_text`.
+- An Edge Function `brief` that takes `cairn_id`, `lat` and `lng`, calls `public.distance_m()` against the cairn's own row and returns nothing unless `distance_m <= radius_m` — the same check `cairn_detail` makes, derived server-side from the cairn row, never from a client flag.
 - The function reads stones for that cairn ordered `created_at asc`, joined to `profiles.display_name`, and builds the prompt from `transcript` (falling back to `body_text` for text stones). It reads **stored** transcripts — it does not transcribe anything.
 - Cache: if a `briefings` row exists for the cairn and no stone has been added since `generated_at`, return the stored `summary_text` immediately without calling Claude.
 - Playback: on-device text-to-speech via `expo-speech`. One press → speech starts. No second tap, no play control required to hear it.
@@ -55,7 +55,7 @@ It is also the entire B2B argument compressed into one interaction: the institut
 
 **The dependency runs backwards from what you'd expect.** Brief me depends on *stored* transcripts, which the seed script (CRN-027) writes directly. It does **not** depend on CRN-022. If someone "helpfully" makes this await live transcription, the P0 moment inherits a P1 failure mode at 15:20. Say no.
 
-**The proximity rule applies here with force.** A briefing is a synthesis of transcripts — it is exactly the content the gate exists to protect. `summary_text` must be returned only by a server-side path that has verified the caller's coordinates against the cairn's `radius_m`. Do not add a public `select` policy on `briefings` and filter in the app. A judge opening the network inspector on the briefing call is the single most likely place this product gets caught.
+**The proximity rule applies here with force.** A briefing is a synthesis of transcripts — it is exactly the content the gate exists to protect. `summary_text` must be returned only by a server-side path that has verified the caller's coordinates against the cairn's `radius_m`. Do not add a public `select` policy on `briefings` and filter in the app. A judge opening the network inspector on the briefing call is the single most likely place this product gets caught. Position is an argument; identity is `auth.uid()` from the forwarded JWT and is never a parameter.
 
 **Constrain the length in the prompt, hard.** Spoken English runs ~150 words per minute, so 25 seconds is **about 60 words**. Instruct explicitly: *"Maximum 60 words. Three sentences at most."* Then enforce it client-side too — truncate at a sentence boundary past ~70 words before handing the string to TTS. An unbounded summary read aloud on stage is ninety seconds of a phone droning while the room's attention leaves. This is the single highest-risk failure in the ticket and it is a prompt problem, not a code problem.
 

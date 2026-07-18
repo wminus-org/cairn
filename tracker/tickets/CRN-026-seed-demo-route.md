@@ -29,7 +29,7 @@ Seed through the **app**, not SQL. Use the drop-a-cairn flow from `CRN-009` and 
 
 **1 — Outside the entrance.** Personal cairn (`space_id` null). One voice stone, 12–20 seconds, warm, first person, addressed to whoever comes next. Not a product description. This is the entire emotional case and the room decides in the first fifteen seconds.
 
-**2 — Corridor or stairwell.** Personal cairn. One photo stone of an *actual* radiator, control panel, riser or fire door — something you can physically point the camera at again on stage while the pins are on screen. Frame it so three distinct features are visible and separated: the pins need somewhere to go. Take the photo now; **you come back at 13:15 and place the three pins yourself** — see the second pass below.
+**2 — Corridor or stairwell.** Personal cairn. One photo stone of an *actual* radiator, control panel, riser or fire door — something you can physically point the camera at again on stage while the pins are on screen. Frame it so three distinct features are visible and separated: the pins need somewhere to go. Take the photo now; **you come back after the 14:00 pin gate and place the three pins yourself** — see the second pass below.
 
 **3 — Meeting room.** Drop the cairn to capture the coordinate. Contents and Space ownership are `CRN-027`'s job — leave it with a title and nothing else.
 
@@ -37,16 +37,18 @@ Seed through the **app**, not SQL. Use the drop-a-cairn flow from `CRN-009` and 
 
 Then, for each of the four: record the coordinate to six decimal places, the accuracy reading the phone reported, and a landmark photo of the exact spot, into the table below. A lat/lng is not findable by a teammate who was not standing next to you.
 
-| # | Where | Lat | Lng | Reported accuracy | Cairn id | Landmark photo |
-|---|---|---|---|---|---|---|
-| 1 | Entrance | | | | | |
-| 2 | Corridor / stairwell | | | | | |
-| 3 | Meeting room | | | | | |
-| 4 | Demo stage | | | | | |
+| # | Where | Lat | Lng | Reported accuracy | `radius_m` | Cairn id | Landmark photo |
+|---|---|---|---|---|---|---|---|
+| 1 | Entrance | | | | 30 | | |
+| 2 | Corridor / stairwell | | | | | | |
+| 3 | Meeting room | | | | | | |
+| 4 | Demo stage | | | | | | |
+
+**Set `radius_m` per cairn as you seed.** Cairn 1 (outdoors) keeps the default 30. Cairns 2, 3 and 4 are indoors: `update cairns set radius_m = 60 where id in (...)`, or 80 if the accuracy reading you recorded is worse than 30m. Record the value you used in the table above — `CRN-015`'s render path reads it per cairn and `CRN-028` will not let you change it after 15:30.
 
 Approach bearing for cairn 1 (the direction you walk in from, for the 200m blur beat): ________
 
-**Second pass — 13:15, once `CRN-013` and `CRN-014` have landed.** Walk back to the corridor and put the three pins the pitch names onto cairn 2's photo stone, through the pin UI, in this order:
+**Second pass — immediately after the 14:00 pin gate passes, and before the 14:30 slot starts.** Walk back to the corridor and put the three pins the pitch names onto cairn 2's photo stone, through the pin UI, in this order:
 
 1. **Voice pin** — "the last technician." A different voice from cairn 1. Names the part, names what he did, trails off the way a real handover does. 10–20 seconds.
 2. **Text pin** — short, flat, factual: a date and a part number.
@@ -65,6 +67,7 @@ Record the three pin ids as you go:
 - [ ] Four cairns exist in the database, each created through the app on a physical device, and all four render as glyphs on the map.
 - [ ] The table above is filled in — four coordinates at six decimal places, four accuracy readings, four cairn ids, four landmark photos in the repo or shared album.
 - [ ] Every reported accuracy is **≤ 20m**. A row with 65m accuracy is not a seeded cairn, it is a guess.
+- [ ] `select id, radius_m from cairns` shows 30 for cairn 1 and 60–80 for cairns 2, 3 and 4.
 - [ ] Standing at cairn 1, its voice stone plays on a **second** device signed in as a different account — proving it went to the server, not just the recording phone's cache.
 - [ ] Cairn 1's audio is between 10 and 25 seconds long and is audible over ambient noise on phone speaker at arm's length.
 - [ ] Cairn 2's photo stone opens at full resolution when standing in the corridor and the physical object in the photo is identifiable from three metres away.
@@ -77,7 +80,7 @@ Record the three pin ids as you go:
 
 ## Not in this ticket
 
-Building the pin-placement UI and the pin viewer — `CRN-013`/`CRN-014`, landing at 13:15. *Placing* cairn 2's three pins and setting the unresolved flag is this ticket's second pass, above: those tickets build the tools, this one seeds the content, and neither of them will do it for you. Cairn 3's eleven stones, its Space and its four fake authors — all `CRN-027`. Fixed-route position override — `CRN-025`, which consumes this table. Rehearsal — `CRN-028`. What you say while walking — `CRN-029`.
+Building the pin-placement UI and the pin viewer — `CRN-013`/`CRN-014`, which *start* at 13:15 and are gated at 14:00. *Placing* cairn 2's three pins and setting the unresolved flag is this ticket's second pass, above: those tickets build the tools, this one seeds the content, and neither of them will do it for you. Cairn 3's eleven stones, its Space and its four fake authors — all `CRN-027`. Fixed-route position override — `CRN-025`, which consumes this table. Rehearsal — `CRN-028`. What you say while walking — `CRN-029`.
 
 ## Notes & traps
 

@@ -41,7 +41,7 @@ Voice is the primitive the whole product rests on — every stone in the demo ro
 
 ## Not in this ticket
 
-Upload and the `stones` row (CRN-011). Transcription. Playback of remote stones. The blurred/pixelated proximity rendering of a waveform — CRN-017 consumes this component but owns the gating. Text stones, and audio attached to photo pins.
+Upload and the `stones` row (CRN-011). Transcription. Playback of remote stones. The blurred/pixelated proximity rendering of a waveform — CRN-015 owns that treatment. CRN-017 reuses this recorder to stack a stone. Text stones, and audio attached to photo pins.
 
 ## Notes & traps
 

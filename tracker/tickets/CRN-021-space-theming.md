@@ -21,7 +21,7 @@ Straight from the plan: *"A company sets an accent color and a wordmark. Their c
 
 ## Scope
 
-- Add `wordmark text` to `spaces` (short string, ≤ 24 chars, rendered in the app typeface). One `ALTER TABLE`.
+- `spaces.wordmark text` already exists — it ships in CRN-002's 10:30 paste (nullable, ≤ 24 chars, rendered in the app typeface). Read it; do not `ALTER TABLE`.
 - The cairn RPC from CRN-020 returns `accent_hex` per cairn, joined from `spaces`. Personal cairns return null and fall back to amber `#D9A441`.
 - Map glyph colour is driven off the feature property with a Mapbox style expression, e.g. `['coalesce', ['get', 'accent_hex'], '#D9A441']` — one layer, data-driven. Not one layer per Space.
 - Space header: wordmark text on base `#0F1E17`, accent used for the underline/rule and for the active-Space chip. Contour and body type stay `#E8E3D8`.
@@ -48,5 +48,4 @@ Straight from the plan: *"A company sets an accent color and a wordmark. Their c
 - Mapbox layer style props take expressions as plain JS arrays; a data-driven colour is `['get', 'accent_hex']` where `accent_hex` is a property on the GeoJSON feature, so the value has to be inside the feature's `properties`, not alongside it. If every glyph comes out the fallback colour, that's almost always where it went wrong.
 - If the glyphs are rendered as an image/`SymbolLayer` sprite, colour won't apply unless the icon is an SDF; a `CircleLayer` or a shape you can fill directly is the fast path. Don't spend the 25 minutes fighting sprite tinting — swap the mark instead.
 - Arbitrary accents on `#0F1E17` can be nearly invisible (dark green, navy, black). Validate the hex format in CRN-018 and choose a known-good accent for the demo Space yourself. Nothing about this is worth a runtime luminance check today.
-- `ALTER TABLE` means the PostgREST schema cache is stale: `NOTIFY pgrst, 'reload schema';` or you'll get a column-not-found error on a column you can see in the table editor.
 - Remember to also update the RPC's return type when you add `accent_hex` to it. Changing a function's `returns table (...)` signature needs a `drop function` first if the column list changes; a plain `create or replace` will error.

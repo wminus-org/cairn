@@ -8,7 +8,7 @@ owner: unassigned
 estimate: 30m
 slot: "14:00"
 depends_on: [CRN-002, CRN-004]
-blocks: [CRN-019, CRN-027]
+blocks: [CRN-019]
 ---
 
 # CRN-018 — Create a Space with a join code
@@ -17,7 +17,7 @@ blocks: [CRN-019, CRN-027]
 
 ## Why this exists
 
-Spaces are the business model. The demo's third cairn (the meeting room, eleven stones, "Brief me") is a Space cairn, so a Space has to actually exist before the demo seed in CRN-027 can be written. The join code is also the thing you say out loud on stage — "join code M7K2QP" — so it has to be legible when spoken.
+Spaces are the business model. The demo's third cairn (the meeting room, eleven stones, "Brief me") is a Space cairn, but CRN-027 seeds its Space row directly in SQL at 12:30 — this ticket is the user-facing path to the same shape and is not a prerequisite for the seed. The join code is also the thing you say out loud on stage — "join code M7K2QP" — so it has to be legible when spoken.
 
 ## Scope
 

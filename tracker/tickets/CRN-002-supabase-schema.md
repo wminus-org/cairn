@@ -19,7 +19,7 @@ blocks: [CRN-003, CRN-004, CRN-005, CRN-009, CRN-018]
 
 `PLAN.md` specifies seven tables and says explicitly: on Supabase this is one SQL paste. Doing it in one paste is the point — if the schema arrives in three instalments, every ticket downstream gets written against a moving target and someone spends the afternoon on `column does not exist`.
 
-Storage paths (`CRN-003`), auth and profiles (`CRN-004`), the server-side proximity gate (`CRN-005`), cairn creation (`CRN-009`) and demo seeding (`CRN-018`) all read from this. Get it right once and nobody touches it again.
+Storage paths (`CRN-003`), auth and profiles (`CRN-004`), the server-side proximity gate (`CRN-005`), cairn creation (`CRN-009`), Space creation (`CRN-018`) and demo seeding (`CRN-026`, `CRN-027`) all read from this. Get it right once and nobody touches it again.
 
 ## Scope
 
@@ -41,7 +41,7 @@ Types and constraints:
 
 - `uuid` primary keys, `default gen_random_uuid()`. Two exceptions: `profiles.id` is not generated — it is `references auth.users(id) on delete cascade` — and `briefings` has no surrogate `id` at all (see below).
 - All timestamps `timestamptz default now()`. Never `timestamp`.
-- `lat` / `lng` as `double precision not null`. **No PostGIS.** Distance is a haversine expression inside the `CRN-005` RPC; adding an extension and a geography column buys nothing today and costs an index-type argument.
+- `lat` / `lng` as `double precision not null`. **No PostGIS**, no `cube`/`earthdistance`, no geography column, no GIST index. Distance is `public.distance_m(lat1, lng1, lat2, lng2)` — a haversine `sql immutable` function created in this same paste (body in [`reference/data-model.md`](../reference/data-model.md)) and called by both CRN-005 RPCs and CRN-017's write path.
 - `cairns.radius_m integer not null default 30`.
 - `stones.kind text not null check (kind in ('voice','photo','text'))`.
 - `stones.image_aspect_ratio numeric` — written at capture by `CRN-012`, divided by in `CRN-013` and `CRN-014` to lock the photo container. Not in the plan's column list; it is in the paste so nobody has to `alter table` at 13:15 and wait on a PostgREST schema-cache reload.
@@ -73,12 +73,13 @@ Then, in the same paste, `alter table ... enable row level security;` on all sev
 - [ ] `insert into stones (cairn_id, author_id, kind) values (<id>, <uid>, 'video');` is rejected by the check constraint.
 - [ ] Two rows in `spaces` with the same `join_code` cannot both be inserted.
 - [ ] A `select * from cairns` issued from the client with the **anon** key and no session returns zero rows and no error — default deny is live.
+- [ ] `select public.distance_m(46.05, 14.51, 46.06, 14.51)` returns roughly 1112.
 - [ ] Deleting a cairn removes its stones and their pins in one statement.
 - [ ] The migration SQL is committed to the repo, not only pasted into the dashboard.
 
 ## Not in this ticket
 
-Read and write policies for authenticated users — those are `CRN-005` (the proximity gate) and `CRN-020` (Space scoping), and writing them here guarantees they get written twice and disagree. The `handle_new_user` trigger that creates a `profiles` row on signup belongs to `CRN-004`. Storage buckets and their policies are `CRN-003`. Seed data is `CRN-018`.
+Read and write policies for authenticated users — those are `CRN-005` (the proximity gate) and `CRN-020` (Space scoping), and writing them here guarantees they get written twice and disagree. The `handle_new_user` trigger that creates a `profiles` row on signup belongs to `CRN-004`. Storage buckets and their policies are `CRN-003`. Seed data is `CRN-026` and `CRN-027`.
 
 ## Notes & traps
 
