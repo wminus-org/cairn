@@ -35,8 +35,10 @@
  * iteration and a service_role overwrite of a transcript somebody curated. A
  * stone that already has text short-circuits before any download; the write
  * narrows to `transcript is null` so a second caller cannot clobber the first;
- * and a per-stone cooldown bounds the case the first two miss, which is a stone
- * whose transcript legitimately stays null because Scribe keeps failing.
+ * a per-stone cooldown bounds the case the first two miss, which is a stone
+ * whose transcript legitimately stays null because Scribe keeps failing; and a
+ * per-cairn budget bounds the loop itself, which the per-stone cooldown does not
+ * — a walk across fresh ids is a first attempt every time.
  *
  * FAILURE IS ALWAYS SOFT, AND THAT IS THE POINT (CRN-022's acceptance criteria
  * time it with a stopwatch). Nothing in the capture path awaits this. A stone
@@ -63,22 +65,61 @@ const SCRIBE_MODEL_ID = 'scribe_v1';
 const ATTEMPT_COOLDOWN_MS = 60_000;
 
 /**
+ * How many Scribe calls one cairn may cause in `CAIRN_WINDOW_MS`. The per-stone
+ * cooldown alone does not bound the attack it was written for: a caller who
+ * scrapes ids from one unlocked `cairn_detail` is looping over DIFFERENT stones,
+ * so every id is its own first attempt and the cooldown never fires. This is the
+ * limit that makes that loop cost a fixed amount.
+ *
+ * SIZED ABOVE THE HONEST WORST CASE ON PURPOSE. The thread asks for every
+ * untranscribed stone at once the moment a cairn unlocks, and it marks each one
+ * attempted BEFORE the call — a 429 is indistinguishable from "no transcript"
+ * to `requestTranscription`, so a stone refused here is not retried for the rest
+ * of the session. A budget that bites during a normal first open would therefore
+ * not throttle anything, it would just lose transcripts. This has to be raised
+ * alongside any cairn that legitimately holds more untranscribed voice stones.
+ */
+const CAIRN_BUDGET = 16;
+const CAIRN_WINDOW_MS = 60_000;
+
+/**
  * Attempts, in this process. Metro is a single node, so a Map is the whole
  * mechanism; a table would outlive the demo by about a day and cost a
  * round trip on the path we are trying to make cheap.
+ *
+ * PER-PROCESS, AND NOT A RATE LIMIT. Both maps die with the dev server and
+ * neither is shared across instances, so this bounds a runaway loop inside one
+ * session and nothing else. It is not a substitute for a real limit — that
+ * belongs at the edge, or in a table with the spend on it, and neither exists
+ * today. Treat this as a fuse, not as protection.
  */
 const lastAttempt = new Map<string, number>();
+const cairnAttempts = new Map<string, number[]>();
 
-/** True if this caller may burn a Scribe call on `stoneId` right now. */
-function claimAttempt(stoneId: string): boolean {
+/**
+ * True if this caller may burn a Scribe call on `stoneId` right now. Both limits
+ * are checked before either is recorded, so a request refused by one does not
+ * spend the other's budget.
+ */
+function claimAttempt(cairnId: string, stoneId: string): boolean {
   const now = Date.now();
-  // Swept on the way past so the map cannot grow with every stone ever seen.
+  // Swept on the way past so the maps cannot grow with every stone ever seen.
   for (const [id, at] of lastAttempt) {
     if (now - at >= ATTEMPT_COOLDOWN_MS) lastAttempt.delete(id);
   }
+  for (const [id, times] of cairnAttempts) {
+    const live = times.filter((at) => now - at < CAIRN_WINDOW_MS);
+    if (live.length === 0) cairnAttempts.delete(id);
+    else cairnAttempts.set(id, live);
+  }
 
   if (lastAttempt.has(stoneId)) return false;
+
+  const recent = cairnAttempts.get(cairnId) ?? [];
+  if (recent.length >= CAIRN_BUDGET) return false;
+
   lastAttempt.set(stoneId, now);
+  cairnAttempts.set(cairnId, [...recent, now]);
   return true;
 }
 
@@ -184,7 +225,7 @@ export async function POST(request: Request): Promise<Response> {
   // Claimed before the download, not after: two callers racing the same stone
   // should cost one Scribe call, not two. 429 is as soft as every other status
   // here — the caller discards it exactly the same way.
-  if (!claimAttempt(stoneId)) return fail(429, 'That stone was just attempted.');
+  if (!claimAttempt(cairnId, stoneId)) return fail(429, 'That stone was just attempted.');
 
   const asService: SupabaseClient = createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },

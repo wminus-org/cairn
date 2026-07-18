@@ -53,12 +53,25 @@ export interface StoneRowProps {
   unlocked: boolean;
   degrade?: StoneDegrade | null;
   playback?: StonePlayback | null;
+  /**
+   * A transcription request is in flight for this stone right now. Only ever
+   * true while something is actually pending — a stone whose transcript came
+   * back null goes back to false and renders audio-only, because a null
+   * transcript is a finished state and not a thing to keep spinning over.
+   */
+  transcribing?: boolean;
 }
 
 /** Photo stones with no aspect ratio yet still need a box of some shape. */
 const DEFAULT_ASPECT = 4 / 3;
 
-function StoneRow({ stone, unlocked, degrade = null, playback = null }: StoneRowProps) {
+function StoneRow({
+  stone,
+  unlocked,
+  degrade = null,
+  playback = null,
+  transcribing = false,
+}: StoneRowProps) {
   const pins = stonePinCount(stone);
 
   return (
@@ -76,7 +89,13 @@ function StoneRow({ stone, unlocked, degrade = null, playback = null }: StoneRow
 
       <View style={styles.body}>
         <View style={{ opacity: degrade ? degrade.opacity : 1 }}>
-          <StoneBody stone={stone} unlocked={unlocked} pins={pins} playback={playback} />
+          <StoneBody
+            stone={stone}
+            unlocked={unlocked}
+            pins={pins}
+            playback={playback}
+            transcribing={transcribing}
+          />
         </View>
 
         {/* Blur sits over the body rather than being baked into it, so the same
@@ -100,11 +119,13 @@ function StoneBody({
   unlocked,
   pins,
   playback,
+  transcribing,
 }: {
   stone: CairnStone;
   unlocked: boolean;
   pins: number;
   playback: StonePlayback | null;
+  transcribing: boolean;
 }) {
   if (stone.kind === 'voice') {
     return (
@@ -130,6 +151,14 @@ function StoneBody({
             play, the thread still reads. Only ever present when unlocked. */}
         {unlocked && stone.transcript ? (
           <Text style={styles.transcript}>{stone.transcript}</Text>
+        ) : null}
+
+        {/* Only while a request is genuinely open, and never over a stone that
+            already has text. It is a line of copy rather than a spinner because
+            the outcome is allowed to be "nothing" — this must not read as a
+            promise that a transcript is coming, since often one is not. */}
+        {unlocked && !stone.transcript && transcribing ? (
+          <Text style={styles.transcriptPending}>transcribing…</Text>
         ) : null}
       </View>
     );
@@ -183,6 +212,9 @@ const styles = StyleSheet.create({
   },
   stopGlyph: { width: 12, height: 12, backgroundColor: colors.t100, borderRadius: s.r.stone },
   transcript: { ...type.small, color: colors.t60, marginTop: s.unit, maxWidth: '100%' },
+  // Fainter than the transcript it stands in for, and not amber: amber is the
+  // proximity signal on this screen and nothing else may borrow it.
+  transcriptPending: { ...type.small, color: colors.t20, marginTop: s.unit },
   text: { ...type.body, color: colors.text },
   textSkeleton: { gap: s.unit },
   skeletonLine: { height: 10, borderRadius: s.r.stone, backgroundColor: colors.t20 },

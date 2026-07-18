@@ -17,8 +17,9 @@
  * hold. It is a treatment over a waveform the client synthesised from the stone
  * id, which is all there is to draw.
  */
-import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
+import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import * as Speech from 'expo-speech';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -27,6 +28,7 @@ import {
   fetchCairnDetail,
   getStoneAudioUrl,
   isCairnApiError,
+  requestBriefing,
   requestTranscription,
   type CairnDetail,
   type CairnStone,
@@ -238,6 +240,8 @@ export default function CairnThreadScreen() {
 
   /** Asked-for already, so a refetch every few seconds does not re-ask. */
   const transcribed = useRef<Set<string>>(new Set());
+  /** Stones with a request open right now. Drives the pending line, nothing else. */
+  const [transcribing, setTranscribing] = useState<ReadonlySet<string>>(() => new Set());
 
   /**
    * Transcripts are DEMO.md's fallback for a loud room, and they are fetched
@@ -258,21 +262,129 @@ export default function CairnThreadScreen() {
       if (transcribed.current.has(stone.id)) continue;
       transcribed.current.add(stone.id);
 
-      void requestTranscription(cairnId, stone.id, at).then((transcript) => {
-        if (!transcript) return;
-        setDetail((prev) =>
-          prev
-            ? {
-                ...prev,
-                stones: prev.stones.map((row) =>
-                  row.id === stone.id ? { ...row, transcript } : row,
-                ),
-              }
-            : prev,
-        );
-      });
+      const stoneId = stone.id;
+      setTranscribing((prev) => new Set(prev).add(stoneId));
+
+      void requestTranscription(cairnId, stoneId, at)
+        .then((transcript) => {
+          if (!transcript) return;
+          setDetail((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  stones: prev.stones.map((row) =>
+                    row.id === stoneId ? { ...row, transcript } : row,
+                  ),
+                }
+              : prev,
+          );
+        })
+        // Clears on every outcome, including the null one. A pending line that
+        // outlives its request is worse than no pending line at all — it reads
+        // as a transcript still coming when the answer already arrived and was
+        // "none". `requestTranscription` never rejects, so this only ever runs
+        // as the success path; it is `finally` so that stays true if it changes.
+        .finally(() => {
+          setTranscribing((prev) => {
+            const next = new Set(prev);
+            next.delete(stoneId);
+            return next;
+          });
+        });
     }
   }, [cairnId, detail]);
+
+  // --- Brief me (CRN-023) ---------------------------------------------------
+
+  const [briefPhase, setBriefPhase] = useState<BriefPhase>('idle');
+  /** Kept after speech ends: this text IS the fallback if the speaker fails. */
+  const [briefText, setBriefText] = useState<string | null>(null);
+  const [briefError, setBriefError] = useState<string | null>(null);
+
+  /**
+   * The phone must stop talking when this screen goes away. A briefing that
+   * keeps narrating over the next part of the pitch is funny exactly once.
+   * Also fires on a cairn change, so walking from one cairn to another does not
+   * leave the previous one's synthesis running.
+   */
+  useEffect(() => {
+    return () => {
+      void Speech.stop();
+    };
+  }, [cairnId]);
+
+  /** A new cairn is a new briefing. Never show one cairn's text under another. */
+  useEffect(() => {
+    setBriefPhase('idle');
+    setBriefText(null);
+    setBriefError(null);
+  }, [cairnId]);
+
+  /**
+   * One press, and the phone talks. No confirmation, no modal to dismiss, no
+   * play button that appears afterwards — the pitch says "with a drill in your
+   * other hand", and a second tap makes that untrue.
+   *
+   * The summary is set on screen BEFORE `Speech.speak`, deliberately. DEMO.md's
+   * stage fallback is the presenter reading the first two lines aloud when the
+   * speaker fails, and text that only appears in `onStart` is text that is not
+   * there in exactly the case it is needed.
+   */
+  const onBrief = useCallback(async () => {
+    if (briefPhase === 'working') return;
+
+    // Speaking already? Stop. This is the only way to shut it up mid-briefing,
+    // and pressing the button again is where everyone reaches first.
+    if (briefPhase === 'speaking') {
+      void Speech.stop();
+      setBriefPhase('idle');
+      return;
+    }
+
+    const at = coordsRef.current;
+    if (!at) return;
+
+    setBriefError(null);
+    setBriefPhase('working');
+
+    try {
+      const briefing = await requestBriefing(cairnId, at);
+      setBriefText(briefing.summary);
+
+      // The silent switch will otherwise eat this entirely: under the default
+      // iOS audio session a phone with the ring switch flipped speaks nothing,
+      // with no error and no clue why. Failing to set the mode is not a reason
+      // to skip the speech — a phone that is not on silent still works.
+      try {
+        await setAudioModeAsync({ playsInSilentMode: true });
+      } catch {
+        // Nothing to say to the walker about an audio session.
+      }
+
+      setBriefPhase('speaking');
+      Speech.speak(briefing.summary, {
+        onDone: () => setBriefPhase('idle'),
+        onStopped: () => setBriefPhase('idle'),
+        // TTS failing must not clear the text — it is the whole fallback.
+        onError: () => setBriefPhase('idle'),
+      });
+    } catch (err) {
+      const failure = isCairnApiError(err) ? err : null;
+      setBriefPhase('idle');
+      if (failure?.kind === 'too-far') {
+        setBriefError('You have walked out of range. Come back for the briefing.');
+        // The screen says "here" and the gate just said otherwise. Refetch so it
+        // stops making a promise the server will not keep.
+        void load(at);
+      } else {
+        setBriefError(
+          failure?.kind === 'unauthenticated'
+            ? 'Signed out. Reopen the app to sign back in.'
+            : 'Could not put a briefing together just now.',
+        );
+      }
+    }
+  }, [briefPhase, cairnId, load]);
 
   /**
    * Newest first. The RPC already orders by `created_at desc`, and this sorts
@@ -301,6 +413,33 @@ export default function CairnThreadScreen() {
   }, [router]);
 
   const unlocked = detail?.band === 'unlocked';
+
+  /**
+   * Null means no Brief me button at all.
+   *
+   * Two stones with words in them is the floor: a synthesis of one note is that
+   * note read back, which makes the feature look like a gimmick in the one
+   * moment it has to look like the product. Text stones count — `body_text` is
+   * a text stone's transcript, and the route reads it the same way.
+   *
+   * The band check is not a distance check. Below 'unlocked' the transcripts
+   * are not in the payload at all, so there is nothing to count and nothing to
+   * brief; the button is missing for the same reason the content is.
+   */
+  const brief = useMemo<BriefControl | null>(() => {
+    if (!unlocked || !detail) return null;
+    const speakable = detail.stones.filter(
+      (stone) => (stone.transcript ?? stone.body_text ?? '').trim().length > 0,
+    ).length;
+    if (speakable < 2) return null;
+
+    return {
+      phase: briefPhase,
+      text: briefText,
+      error: briefError,
+      onPress: () => void onBrief(),
+    };
+  }, [briefError, briefPhase, briefText, detail, onBrief, unlocked]);
 
   /**
    * Null means no play control at all. Two guards, and neither is a distance
@@ -374,6 +513,8 @@ export default function CairnThreadScreen() {
           degrade={degrade}
           unlocked={!!unlocked}
           playbackFor={playbackFor}
+          transcribing={transcribing}
+          brief={brief}
           onRetry={() => {
             const at = coordsRef.current;
             if (at) void load(at);
@@ -392,6 +533,8 @@ function ThreadBody({
   degrade,
   unlocked,
   playbackFor,
+  transcribing,
+  brief,
   onRetry,
 }: {
   phase: Phase;
@@ -401,6 +544,8 @@ function ThreadBody({
   degrade: StoneDegrade | null;
   unlocked: boolean;
   playbackFor: (stone: CairnStone) => StonePlayback | null;
+  transcribing: ReadonlySet<string>;
+  brief: BriefControl | null;
   onRetry: () => void;
 }) {
   if (phase === 'waiting' || (phase === 'loading' && !detail)) {
@@ -467,6 +612,10 @@ function ThreadBody({
         </Text>
       ) : null}
 
+      {/* Above the stones, so the summary is on screen without scrolling —
+          DEMO.md's stage fallback is the presenter reading it aloud. */}
+      {brief ? <BriefMe brief={brief} /> : null}
+
       {stones.map((stone) => (
         <StoneRow
           key={stone.id}
@@ -474,8 +623,58 @@ function ThreadBody({
           unlocked={unlocked}
           degrade={degrade}
           playback={playbackFor(stone)}
+          transcribing={transcribing.has(stone.id)}
         />
       ))}
+    </View>
+  );
+}
+
+/**
+ * `working` is the only phase that has to be visible before anything is
+ * audible: a cold generation is three to six seconds of a phone that looks
+ * broken. A cached one returns in well under a second and this state barely
+ * renders, which is the intent.
+ */
+type BriefPhase = 'idle' | 'working' | 'speaking';
+
+interface BriefControl {
+  phase: BriefPhase;
+  /** The synthesis, kept on screen after speech ends. Never markdown. */
+  text: string | null;
+  error: string | null;
+  onPress: () => void;
+}
+
+/**
+ * The button and the three lines under it.
+ *
+ * The text is small and low-contrast on purpose. This is a listening surface,
+ * not a reading one — if the prose competes for attention, people read instead
+ * of listening and the moment the whole build exists for dies. It is here as
+ * the fallback for a failed or silent speaker, and nothing larger than that.
+ */
+function BriefMe({ brief }: { brief: BriefControl }) {
+  const speaking = brief.phase === 'speaking';
+  const working = brief.phase === 'working';
+
+  return (
+    <View style={styles.briefBlock}>
+      <Pressable
+        onPress={brief.onPress}
+        disabled={working}
+        style={[styles.briefButton, speaking && styles.briefButtonSpeaking]}
+        accessibilityRole="button"
+        accessibilityState={{ busy: working }}
+        accessibilityLabel={speaking ? 'Stop the briefing' : 'Brief me on this cairn'}
+      >
+        <Text style={[styles.briefLabel, speaking && styles.briefLabelSpeaking]}>
+          {working ? 'putting it together' : speaking ? 'speaking — tap to stop' : 'brief me'}
+        </Text>
+      </Pressable>
+
+      {brief.text ? <Text style={styles.briefText}>{brief.text}</Text> : null}
+      {brief.error ? <Text style={styles.meta}>{brief.error}</Text> : null}
     </View>
   );
 }
@@ -525,6 +724,22 @@ const styles = StyleSheet.create({
     borderColor: colors.hairline,
   },
   retryLabel: { ...type.mono, color: colors.text },
+  briefBlock: { gap: s.unit * 1.5, alignItems: 'flex-start' },
+  briefButton: {
+    paddingHorizontal: s.pad,
+    paddingVertical: s.unit * 1.5,
+    borderRadius: s.r.chip,
+    // Contour-on-base, like every other primary control. Amber is a proximity
+    // signal, not chrome — so it appears on the BORDER only while the phone is
+    // actually talking, which is the one moment the accent is telling the truth.
+    borderWidth: 1,
+    borderColor: colors.hairline,
+  },
+  briefButtonSpeaking: { borderColor: colors.accent },
+  briefLabel: { ...type.mono, color: colors.text },
+  briefLabelSpeaking: { ...type.mono, color: colors.accent },
+  /** Small and at 60% — see BriefMe. Deliberately not a reading surface. */
+  briefText: { ...type.small, color: colors.t60 },
   skeletonThread: { gap: s.thread },
   skeletonStone: { gap: s.unit },
   skeletonLine: { height: 10, borderRadius: s.r.stone, backgroundColor: colors.t20 },

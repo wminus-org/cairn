@@ -846,6 +846,79 @@ export async function requestTranscription(
   }
 }
 
+/** What `/api/brief` hands back. `cached` is true when no model was called. */
+export interface Briefing {
+  /** Spoken aloud AND rendered on screen. Never markdown — the route strips it. */
+  summary: string;
+  cached: boolean;
+  /** ISO timestamp of the `briefings` row this text belongs to. */
+  generatedAt: string;
+}
+
+/**
+ * "Brief me" (CRN-023) — the spoken synthesis of a cairn.
+ *
+ * Unlike `requestTranscription` above, this one THROWS. The difference is not
+ * stylistic: a transcript is optional polish that nobody asked for, while a
+ * briefing is a button someone just pressed and is now standing there waiting
+ * on. Silence with no explanation is the worst possible answer, so failures
+ * arrive as a `CairnApiError` the screen can turn into a line of copy.
+ *
+ * The position is the proof, exactly as in `getStoneAudioUrl`. The route
+ * re-runs `cairn_detail` under this caller's token and refuses unless the
+ * server's own band comes back `unlocked` — a briefing is every transcript in
+ * the cairn compressed into three sentences, which is the densest thing the
+ * gate protects. Pass `usePosition().coords` unchanged.
+ *
+ * No model key ever reaches the device: the route holds `OPENROUTER_API_KEY` in
+ * the dev server's process environment. Do not add an `EXPO_PUBLIC_` copy — it
+ * would be inlined into the bundle.
+ *
+ * Shares `apiBaseUrl()` with the other two server calls rather than resolving
+ * the dev server a third way. It already knows about tunnels, IPv6 and the
+ * http/https split.
+ */
+export async function requestBriefing(cairnId: string, position: LatLng): Promise<Briefing> {
+  const session = await ensureSession();
+
+  const response = await fetch(`${apiBaseUrl()}/api/brief`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${session.access_token}`,
+    },
+    body: JSON.stringify({
+      cairnId,
+      latitude: position.latitude,
+      longitude: position.longitude,
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = (await response.json().catch(() => null)) as { error?: string } | null;
+    const message = detail?.error ?? `Briefing failed (${response.status}).`;
+    // 403 means one thing only: the server re-checked the distance and said no.
+    // Surface it as 'too-far' so the screen can reuse the copy it already has.
+    throw new CairnApiError(
+      message,
+      response.status === 403 ? 'too-far' : response.status === 401 ? 'unauthenticated' : 'unknown',
+      'api/brief',
+      String(response.status),
+    );
+  }
+
+  const payload = (await response.json()) as Partial<Briefing>;
+  if (typeof payload.summary !== 'string' || !payload.summary.trim()) {
+    throw new CairnApiError('The briefing came back empty.', 'unknown', 'api/brief');
+  }
+
+  return {
+    summary: payload.summary.trim(),
+    cached: payload.cached === true,
+    generatedAt: typeof payload.generatedAt === 'string' ? payload.generatedAt : '',
+  };
+}
+
 // --- Errors -----------------------------------------------------------------
 
 /**

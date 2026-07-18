@@ -4,12 +4,14 @@ import type { ConfigContext, ExpoConfig } from 'expo/config';
  * Cairn — Expo app config.
  *
  * Everything secret comes from process.env and is read at *config evaluation*
- * time, i.e. during `expo prebuild` / `expo start`. Nothing secret is written
- * to a file that git tracks: `ios/` is gitignored, and `.env` is gitignored.
+ * time, i.e. during `expo start`. Nothing secret is written to a file that git
+ * tracks: `.env` is gitignored.
  *
- * Two Mapbox tokens, two different jobs — see README.md:
- *   EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN  pk.*  runtime, read by the JS bundle
- *   MAPBOX_DOWNLOAD_TOKEN            sk.*  build time, used by `pod install`
+ * This app must run in the App Store build of Expo Go, so nothing here may
+ * require a prebuild or a custom dev client: no config plugin that ships native
+ * code, and no dependency that is not already bundled in Expo Go. The map is
+ * Apple Maps via react-native-maps, which Expo Go bundles and which needs no
+ * token of any kind.
  */
 
 const IS_DEV = process.env.APP_VARIANT === 'development';
@@ -25,8 +27,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   userInterfaceStyle: 'dark',
   backgroundColor: '#0F1E17',
   assetBundlePatterns: ['**/*'],
-  // The New Architecture is required by @react-native-ai/apple (TurboModules).
-  // SDK 54 enables it by default; stated here so nobody "simplifies" it off.
+  // SDK 54 enables the New Architecture by default and Expo Go is built with
+  // it, so this is a statement of the default rather than a request.
   newArchEnabled: true,
 
   ios: {
@@ -60,10 +62,6 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   plugins: [
     'expo-router',
     'expo-asset',
-    // Required for the custom dev client. @react-native-ai/apple is a
-    // TurboModule and cannot run in Expo Go at all, so from here on the app is
-    // built with `eas build --profile development`, not scanned into Expo Go.
-    'expo-dev-client',
 
     [
       'expo-location',
