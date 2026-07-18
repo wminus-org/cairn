@@ -299,9 +299,15 @@ export interface SignedAudio {
  * Two things that hostUri does not tell you and have to be inferred:
  *  - SCHEME. A LAN address is plain http (Metro serves no TLS). A tunnel is
  *    https and MUST be, since ngrok will not serve http and iOS ATS would
- *    refuse it anyway. Private IPs and localhost → http, anything else → https.
+ *    refuse it anyway. So the test names the tunnel domains and everything else
+ *    is http. It used to run the other way — allowlist the private IP ranges,
+ *    assume https otherwise — which quietly broke every host that is neither:
+ *    a Tailscale 100.64/10 address, an mDNS `Whoevers-MacBook-Pro.local`, a
+ *    venue network handing out routable addressing. Those became `https://host`
+ *    with no TLS on the other end, which hangs. Failing the unknown case into
+ *    plain http instead gets a connection refused you can read.
  *  - PORT. Tunnels report `host:80`, and `https://host:80` connects to the
- *    wrong port and hangs, so the port is dropped whenever the scheme is https.
+ *    wrong port and hangs, so the port is dropped on the tunnel branch only.
  *
  * If this throws "cannot locate the dev server", the app was almost certainly
  * loaded from a production/exported bundle, where there is no hostUri and no
@@ -364,9 +370,17 @@ function apiBaseUrl(): string {
   }
 
   const [host, port] = splitHostPort(hostUri);
-  const secure = !isLocalHost(host);
-  return secure ? `https://${host}` : `http://${host}${port ? `:${port}` : ''}`;
+  if (TUNNEL_HOSTS.test(host)) return `https://${host}`;
+  return `http://${host}${port ? `:${port}` : ''}`;
 }
+
+/**
+ * The domains `expo start --tunnel` and its usual stand-ins hand back. Matching
+ * a name rather than an address range is the only way to identify a tunnel:
+ * every other host is something Metro is serving over plain http, whatever its
+ * address space looks like.
+ */
+const TUNNEL_HOSTS = /\.(exp\.direct|ngrok\.io|ngrok-free\.app|trycloudflare\.com)$/i;
 
 /** IPv6 hosts arrive bracketed (`[::1]:8081`), so a naive split on ':' is wrong. */
 function splitHostPort(hostUri: string): [string, string | null] {
@@ -377,17 +391,6 @@ function splitHostPort(hostUri: string): [string, string | null] {
   const index = bare.lastIndexOf(':');
   if (index === -1) return [bare, null];
   return [bare.slice(0, index), bare.slice(index + 1) || null];
-}
-
-function isLocalHost(host: string): boolean {
-  return (
-    host === 'localhost' ||
-    host === '[::1]' ||
-    /^127\./.test(host) ||
-    /^10\./.test(host) ||
-    /^192\.168\./.test(host) ||
-    /^172\.(1[6-9]|2\d|3[01])\./.test(host)
-  );
 }
 
 // --- Write path: stack_stone ------------------------------------------------

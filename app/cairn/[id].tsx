@@ -17,6 +17,7 @@
  * hold. It is a treatment over a waveform the client synthesised from the stone
  * id, which is all there is to draw.
  */
+import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -24,12 +25,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
   fetchCairnDetail,
+  getStoneAudioUrl,
   isCairnApiError,
+  requestTranscription,
   type CairnDetail,
   type CairnStone,
 } from '../../src/lib/cairnApi';
 import { usePosition, type PositionCoords } from '../../src/lib/usePosition';
-import StoneRow, { type StoneDegrade } from '../../src/thread/StoneRow';
+import StoneRow, { type StoneDegrade, type StonePlayback } from '../../src/thread/StoneRow';
 import {
   approachProgress,
   blurIntensity,
@@ -87,6 +90,17 @@ export default function CairnThreadScreen() {
   const lastFetch = useRef<{ at: PositionCoords; time: number } | null>(null);
   const coordsRef = useRef<PositionCoords | null>(null);
   const unlockedRef = useRef(false);
+
+  /**
+   * ONE player for the whole thread. Starting a second stone must stop the
+   * first — a cairn is a conversation, not a chord — and a player per row would
+   * hold a decoder open for every stone nobody pressed.
+   */
+  const player = useAudioPlayer();
+  const playerStatus = useAudioPlayerStatus(player);
+  const [playingStoneId, setPlayingStoneId] = useState<string | null>(null);
+  /** Kept apart from `errorText` so a successful refetch does not wipe it. */
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
 
   useEffect(() => {
     coordsRef.current = coords;
@@ -162,6 +176,105 @@ export default function CairnThreadScreen() {
   }, [maybeLoad]);
 
   /**
+   * The clip ended on its own. Nothing else reports that, and without it the row
+   * keeps showing a stop glyph over a player that has already stopped.
+   */
+  useEffect(() => {
+    if (playerStatus.didJustFinish) setPlayingStoneId(null);
+  }, [playerStatus.didJustFinish]);
+
+  /**
+   * Playback. The client never signs — `audio_path` is a path in a private
+   * bucket, and `getStoneAudioUrl` posts the position to the API route, which
+   * re-runs the same gate under this user's token before it will sign. So a
+   * press here is a second proximity check, not a formality: the 403 it can
+   * come back with is the server disagreeing with what this screen is showing.
+   */
+  const onToggle = useCallback(
+    async (stoneId: string) => {
+      if (playingStoneId === stoneId) {
+        player.pause();
+        setPlayingStoneId(null);
+        return;
+      }
+
+      const at = coordsRef.current;
+      if (!at) return;
+
+      setPlaybackError(null);
+      try {
+        const { url } = await getStoneAudioUrl(cairnId, stoneId, at);
+        // Silence the outgoing stone before the next one loads, so two clips
+        // cannot overlap across the swap.
+        player.pause();
+        player.replace({ uri: url });
+        player.play();
+        setPlayingStoneId(stoneId);
+      } catch (err) {
+        const failure = isCairnApiError(err) ? err : null;
+        setPlayingStoneId(null);
+        if (failure?.kind === 'too-far') {
+          setPlaybackError('You have walked out of range. Come back to hear this.');
+          // The header says "here" and the gate just said otherwise. Refetch so
+          // the screen stops making a promise the server will not keep.
+          void load(at);
+        } else {
+          setPlaybackError(
+            failure?.kind === 'unauthenticated'
+              ? 'Signed out. Reopen the app to sign back in.'
+              : 'Could not open this recording.',
+          );
+        }
+      }
+    },
+    [cairnId, load, player, playingStoneId],
+  );
+
+  /** 0–1 through the clip, for the amber fill on the row that is playing. */
+  const clipProgress = useMemo(() => {
+    if (!playerStatus.isLoaded || playerStatus.duration <= 0) return 0;
+    return Math.min(1, Math.max(0, playerStatus.currentTime / playerStatus.duration));
+  }, [playerStatus.isLoaded, playerStatus.currentTime, playerStatus.duration]);
+
+  /** Asked-for already, so a refetch every few seconds does not re-ask. */
+  const transcribed = useRef<Set<string>>(new Set());
+
+  /**
+   * Transcripts are DEMO.md's fallback for a loud room, and they are fetched
+   * here rather than at upload because only a caller who is standing at the
+   * cairn may ask — the route re-runs the gate exactly as the signer does.
+   *
+   * `requestTranscription` is written never to throw, so an un-awaited call is
+   * safe. One attempt per stone per session: a null answer leaves the row
+   * audio-only, which is a complete state, not a failure to retry.
+   */
+  useEffect(() => {
+    if (!detail || detail.band !== 'unlocked') return;
+    const at = coordsRef.current;
+    if (!at) return;
+
+    for (const stone of detail.stones) {
+      if (stone.kind !== 'voice' || !stone.audio_path || stone.transcript) continue;
+      if (transcribed.current.has(stone.id)) continue;
+      transcribed.current.add(stone.id);
+
+      void requestTranscription(cairnId, stone.id, at).then((transcript) => {
+        if (!transcript) return;
+        setDetail((prev) =>
+          prev
+            ? {
+                ...prev,
+                stones: prev.stones.map((row) =>
+                  row.id === stone.id ? { ...row, transcript } : row,
+                ),
+              }
+            : prev,
+        );
+      });
+    }
+  }, [cairnId, detail]);
+
+  /**
    * Newest first. The RPC already orders by `created_at desc`, and this sorts
    * anyway — cheap for eleven rows, and a thread that silently renders bottom-up
    * because an ordering changed upstream is the kind of thing nobody notices
@@ -188,6 +301,25 @@ export default function CairnThreadScreen() {
   }, [router]);
 
   const unlocked = detail?.band === 'unlocked';
+
+  /**
+   * Null means no play control at all. Two guards, and neither is a distance
+   * check: the band is the server's word, and `audio_path` is absent from the
+   * payload entirely below 'unlocked' — the control is missing for the same
+   * reason the media is.
+   */
+  const playbackFor = useCallback(
+    (stone: CairnStone): StonePlayback | null => {
+      if (!unlocked || stone.kind !== 'voice' || !stone.audio_path) return null;
+      const isPlaying = playingStoneId === stone.id;
+      return {
+        isPlaying,
+        progress: isPlaying ? clipProgress : 0,
+        onToggle: () => void onToggle(stone.id),
+      };
+    },
+    [clipProgress, onToggle, playingStoneId, unlocked],
+  );
 
   return (
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
@@ -224,7 +356,9 @@ export default function CairnThreadScreen() {
           </View>
         ) : null}
 
-        {errorText ? <Text style={styles.meta}>{errorText}</Text> : null}
+        {errorText || playbackError ? (
+          <Text style={styles.meta}>{errorText ?? playbackError}</Text>
+        ) : null}
       </View>
 
       <ScrollView
@@ -239,6 +373,7 @@ export default function CairnThreadScreen() {
           stones={stones}
           degrade={degrade}
           unlocked={!!unlocked}
+          playbackFor={playbackFor}
           onRetry={() => {
             const at = coordsRef.current;
             if (at) void load(at);
@@ -256,6 +391,7 @@ function ThreadBody({
   stones,
   degrade,
   unlocked,
+  playbackFor,
   onRetry,
 }: {
   phase: Phase;
@@ -264,6 +400,7 @@ function ThreadBody({
   stones: CairnStone[];
   degrade: StoneDegrade | null;
   unlocked: boolean;
+  playbackFor: (stone: CairnStone) => StonePlayback | null;
   onRetry: () => void;
 }) {
   if (phase === 'waiting' || (phase === 'loading' && !detail)) {
@@ -336,12 +473,7 @@ function ThreadBody({
           stone={stone}
           unlocked={unlocked}
           degrade={degrade}
-          // PLAYBACK SEAM — see StonePlayback in src/thread/StoneRow.tsx. Null
-          // until the audio signing route lands: `audio_path` is a storage path
-          // in a private bucket and the client cannot sign it. When the route
-          // exists, one player lives here (starting a second stone stops the
-          // first) and this prop is the only thing that changes.
-          playback={null}
+          playback={playbackFor(stone)}
         />
       ))}
     </View>

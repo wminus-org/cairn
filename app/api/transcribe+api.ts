@@ -27,6 +27,17 @@
  * only after that check passes, and only ever addresses the path the RPC itself
  * derived.
  *
+ * TRANSCRIPTION IS WRITE-ONCE, AND THE GATE IS NOT ENOUGH ON ITS OWN. Passing
+ * the check above costs a caller nothing they cannot repeat — the position is
+ * theirs to claim (see below), and a personal cairn's exact coordinates are
+ * handed to every authenticated user by `cairns_nearby`. So a loop over ids
+ * scraped from one unlocked `cairn_detail` would be a billable Scribe call per
+ * iteration and a service_role overwrite of a transcript somebody curated. A
+ * stone that already has text short-circuits before any download; the write
+ * narrows to `transcript is null` so a second caller cannot clobber the first;
+ * and a per-stone cooldown bounds the case the first two miss, which is a stone
+ * whose transcript legitimately stays null because Scribe keeps failing.
+ *
  * FAILURE IS ALWAYS SOFT, AND THAT IS THE POINT (CRN-022's acceptance criteria
  * time it with a stopwatch). Nothing in the capture path awaits this. A stone
  * appears on the map and plays the moment `stack_stone` returns; the transcript
@@ -42,6 +53,34 @@ const AUDIO_BUCKET = 'cairn-audio';
 
 /** Scribe's general model. `scribe_v1_experimental` exists; this one is the stable id. */
 const SCRIBE_MODEL_ID = 'scribe_v1';
+
+/**
+ * How long a stone rests after an attempt that did not produce text. Long
+ * enough that a spin costs more than it yields, short enough that the one real
+ * retry — a key that was missing when the stone was dropped — still lands
+ * within the session.
+ */
+const ATTEMPT_COOLDOWN_MS = 60_000;
+
+/**
+ * Attempts, in this process. Metro is a single node, so a Map is the whole
+ * mechanism; a table would outlive the demo by about a day and cost a
+ * round trip on the path we are trying to make cheap.
+ */
+const lastAttempt = new Map<string, number>();
+
+/** True if this caller may burn a Scribe call on `stoneId` right now. */
+function claimAttempt(stoneId: string): boolean {
+  const now = Date.now();
+  // Swept on the way past so the map cannot grow with every stone ever seen.
+  for (const [id, at] of lastAttempt) {
+    if (now - at >= ATTEMPT_COOLDOWN_MS) lastAttempt.delete(id);
+  }
+
+  if (lastAttempt.has(stoneId)) return false;
+  lastAttempt.set(stoneId, now);
+  return true;
+}
 
 /** Field names match `app/api/audio+api.ts` so the two routes take one body shape. */
 interface TranscribeBody {
@@ -123,6 +162,12 @@ export async function POST(request: Request): Promise<Response> {
   const stone = (gated.stones ?? []).find((candidate) => candidate.id === stoneId);
   if (!stone) return fail(404, 'No such stone on this cairn.');
 
+  // Already done. The RPC releases `transcript` at this band, so the text is
+  // in hand and there is nothing to pay ElevenLabs for — and nothing this
+  // route could produce that would be worth overwriting a curated one with.
+  const existing = typeof stone.transcript === 'string' ? stone.transcript.trim() : '';
+  if (existing) return Response.json({ transcript: existing });
+
   const audioPath = typeof stone.audio_path === 'string' ? stone.audio_path : null;
   if (!audioPath) return fail(400, 'That stone has no audio.');
 
@@ -135,6 +180,11 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   // --- Fetch, transcribe, write --------------------------------------------
+
+  // Claimed before the download, not after: two callers racing the same stone
+  // should cost one Scribe call, not two. 429 is as soft as every other status
+  // here — the caller discards it exactly the same way.
+  if (!claimAttempt(stoneId)) return fail(429, 'That stone was just attempted.');
 
   const asService: SupabaseClient = createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
@@ -163,11 +213,18 @@ export async function POST(request: Request): Promise<Response> {
   // route is not reinstating it: it takes ids, fetches, and writes text it
   // produced itself. It never accepts a caller-supplied transcript, which is
   // the difference between this and a write-anything endpoint.
+  //
+  // `is('transcript', null)` makes the write once-only at the database rather
+  // than only in the check above, which read a snapshot taken before a network
+  // call. A racing caller that got there first keeps its text and this update
+  // matches no rows — no error, and the transcript below is still the right
+  // thing to hand back, because both callers transcribed the same audio.
   const { error: writeError } = await asService
     .from('stones')
     .update({ transcript })
     .eq('id', stoneId)
-    .eq('cairn_id', cairnId);
+    .eq('cairn_id', cairnId)
+    .is('transcript', null);
 
   if (writeError) return fail(502, `Could not write transcript: ${writeError.message}`);
 
@@ -211,7 +268,7 @@ async function scribe(audio: Blob, path: string, apiKey: string): Promise<string
 /** Only the parts of the `cairn_detail` jsonb this route reads. */
 interface GatedDetail {
   band?: string;
-  stones?: { id?: string; audio_path?: unknown }[];
+  stones?: { id?: string; audio_path?: unknown; transcript?: unknown }[];
 }
 
 function bearerToken(header: string | null): string | null {

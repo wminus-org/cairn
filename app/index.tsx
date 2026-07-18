@@ -85,6 +85,56 @@ function glyphSize(stoneCount: number): number {
   return 14;
 }
 
+/**
+ * One cairn on the map.
+ *
+ * This exists as its own component only to hold `tracksViewChanges`. iOS
+ * snapshots a Marker's children once and then stops watching them, so mounting
+ * with tracking already off captures the glyph before it has laid out and the
+ * cairn draws blank — a map with a user dot and nothing else on it, which is
+ * indistinguishable from cairns_nearby returning no rows and sends you
+ * debugging the RPC. Track until the glyph reports a layout, then stop: we pay
+ * for the watcher for one frame instead of for the whole session.
+ */
+function CairnMarker({ cairn, onPress }: { cairn: CairnSummary; onPress: () => void }) {
+  const size = glyphSize(cairn.stone_count);
+  const [tracks, setTracks] = useState(true);
+
+  /**
+   * A refetch can move a cairn into a different size bucket once someone stacks
+   * on it. The frozen snapshot would keep the old glyph, so re-arm — the size
+   * change guarantees onLayout fires again to turn it back off.
+   */
+  useEffect(() => setTracks(true), [size]);
+
+  return (
+    <Marker
+      coordinate={{ latitude: cairn.lat, longitude: cairn.lng }}
+      title={cairn.title ?? 'Cairn'}
+      description={`${cairn.stone_count} ${
+        cairn.stone_count === 1 ? 'stone' : 'stones'
+      } · ${cairn.distance_m} m`}
+      tracksViewChanges={tracks}
+      // The thread screen refetches with its own position, so nothing
+      // about the cairn travels in the route but its id.
+      onPress={onPress}
+    >
+      <View
+        onLayout={() => setTracks(false)}
+        style={[
+          styles.glyph,
+          {
+            width: size,
+            height: size,
+            borderRadius: size / 2,
+            backgroundColor: cairn.accent_hex ?? colors.accent,
+          },
+        ]}
+      />
+    </Marker>
+  );
+}
+
 export default function MapScreen() {
   const router = useRouter();
   const { coords, status, error: positionError } = usePosition();
@@ -220,35 +270,13 @@ export default function MapScreen() {
         toolbarEnabled={false}
         onLongPress={handleLongPress}
       >
-        {cairns.map((cairn) => {
-          const size = glyphSize(cairn.stone_count);
-          return (
-            <Marker
-              key={cairn.id}
-              coordinate={{ latitude: cairn.lat, longitude: cairn.lng }}
-              title={cairn.title ?? 'Cairn'}
-              description={`${cairn.stone_count} ${
-                cairn.stone_count === 1 ? 'stone' : 'stones'
-              } · ${cairn.distance_m} m`}
-              tracksViewChanges={false}
-              // The thread screen refetches with its own position, so nothing
-              // about the cairn travels in the route but its id.
-              onPress={() => router.push(`/cairn/${cairn.id}`)}
-            >
-              <View
-                style={[
-                  styles.glyph,
-                  {
-                    width: size,
-                    height: size,
-                    borderRadius: size / 2,
-                    backgroundColor: cairn.accent_hex ?? colors.accent,
-                  },
-                ]}
-              />
-            </Marker>
-          );
-        })}
+        {cairns.map((cairn) => (
+          <CairnMarker
+            key={cairn.id}
+            cairn={cairn}
+            onPress={() => router.push(`/cairn/${cairn.id}`)}
+          />
+        ))}
       </MapView>
 
       <SafeAreaView style={styles.overlay} pointerEvents="box-none">

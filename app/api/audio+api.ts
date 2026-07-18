@@ -140,11 +140,18 @@ export async function POST(request: Request): Promise<Response> {
     return json(404, { error: 'no-audio', message: 'That stone has no audio.' });
   }
 
+  // Second, independent check on the one operation that can leak another
+  // cairn's audio, exactly as 0004_proximity_gate.sql asks the signer to do.
+  // The RPC derives this path from `s.cairn_id`, so this can only fire if the
+  // RPC is wrong — and if it ever goes back to echoing a stored column, this is
+  // what keeps a decoy cairn from pointing the signer at someone else's stone.
+  if (!audioPath.startsWith(`${body.cairnId}/`)) return denied();
+
   // --- 2. The signature, as service_role -----------------------------------
   //
   // Reached only on the unlocked path, and only with a path the gate itself
-  // returned. This client never touches `cairn_detail` and never sees a
-  // caller-supplied string.
+  // returned and this route just re-checked. This client never touches
+  // `cairn_detail` and never sees a caller-supplied string.
   const asService = createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
   });
