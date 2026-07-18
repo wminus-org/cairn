@@ -1,4 +1,5 @@
 export { BottomNav } from './BottomNav';
+export { CairnGlyph } from './CairnGlyph';
 export {
   Avatar,
   Btn,

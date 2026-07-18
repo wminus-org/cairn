@@ -21,6 +21,8 @@ export const palette = {
   ink: '#EAE6DA',
   /** Accent — live, active, recording, unlocked. Orange. */
   accent: '#FF5A1F',
+  /** Alert — unresolved pins, unresolved-flag ring, destructive confirm. Terracotta. */
+  alert: '#C0563A',
 } as const;
 
 /**
@@ -32,6 +34,8 @@ export const colors = {
   surfaceSolid: palette.surface,
   contour: palette.ink,
   accent: palette.accent,
+  /** Terracotta. Unresolved pins/flags only — never a general error colour. */
+  alert: palette.alert,
 
   /** Ink at alpha — the whole secondary palette. Pick the nearest rung. */
   t100: palette.ink,
