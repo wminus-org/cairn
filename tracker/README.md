@@ -13,7 +13,7 @@ Everything here derives from [`PLAN.md`](PLAN.md), which is the spec, verbatim. 
 | [`SCHEDULE.md`](SCHEDULE.md) | Hour-by-hour running order with the cut decisions pre-made. |
 | [`DEMO.md`](DEMO.md) | The four-cairn route, the pitch beats, the rehearsal checklist. |
 | [`tickets/`](tickets/) | One file per unit of work. |
-| [`reference/`](reference/) | Design system, data model, vocabulary, positioning, risks. Look things up, don't re-derive. |
+| [`reference/`](reference/) | Design system, data model, vocabulary, positioning, risks, and the on-device AI decision. Look things up, don't re-derive. |
 
 ## Ticket conventions
 

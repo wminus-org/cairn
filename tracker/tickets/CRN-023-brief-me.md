@@ -53,6 +53,8 @@ It is also the entire B2B argument compressed into one interaction: the institut
 
 ## Notes & traps
 
+**Apple Foundation Models was researched and rejected for this ticket.** Apple's own Notification Summaries — the same shape of task — hallucinated badly enough in production that Apple pulled it from news apps. Cross-attributing eleven stones across four authors is exactly its weak edge, and there is no hard word-count control. Stay on Claude, and keep the cached briefing as the stage path. Reasoning: [`reference/on-device-ai.md`](../reference/on-device-ai.md).
+
 **The dependency runs backwards from what you'd expect.** Brief me depends on *stored* transcripts, which the seed script (CRN-027) writes directly. It does **not** depend on CRN-022. If someone "helpfully" makes this await live transcription, the P0 moment inherits a P1 failure mode at 15:20. Say no.
 
 **The proximity rule applies here with force.** A briefing is a synthesis of transcripts — it is exactly the content the gate exists to protect. `summary_text` must be returned only by a server-side path that has verified the caller's coordinates against the cairn's `radius_m`. Do not add a public `select` policy on `briefings` and filter in the app. A judge opening the network inspector on the briefing call is the single most likely place this product gets caught. Position is an argument; identity is `auth.uid()` from the forwarded JWT and is never a parameter.

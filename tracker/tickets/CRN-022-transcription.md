@@ -49,6 +49,8 @@ Second reason it exists: a voice note you can read is a voice note you can act o
 
 ## Notes & traps
 
+**Apple's on-device transcription was researched and deferred — do not reopen it today.** `expo-speech-recognition` would make this free and offline, but Slovenian is not a supported locale on either Apple speech API, and the demo reads seeded transcripts anyway, so it buys the pitch nothing. Full findings and the post-hackathon path: [`reference/on-device-ai.md`](../reference/on-device-ai.md).
+
 **CRN-023 is deliberately NOT downstream of this ticket.** The demo cairn ships with `transcript` values written by the seed script (CRN-027). If this Edge Function is broken at 15:20, "Brief me" still works on stage. Do not let anyone wire `briefings` generation to "wait for transcription to finish" — that couples the P0 moment to a P1 network call.
 
 **Anthropic does not do speech-to-text.** Use whichever hosted STT you already have a key for — Deepgram (`POST https://api.deepgram.com/v1/listen`, raw audio body, `Authorization: Token <key>`) or OpenAI's audio transcription endpoint (multipart with a `file` field and a model name) are both a single POST. Do not spend the 35 minutes shopping. If you have neither key at 15:00, mark this `cut` and move on — the demo does not need it.
