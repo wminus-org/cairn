@@ -1,77 +1,127 @@
 import type { TextStyle } from 'react-native';
 
 /**
- * Cairn design tokens.
+ * Cairn design tokens — from "Cairn RN Wireframes" (claude.ai/design, JUL 18).
  *
- * The palette is the one from PLAN.md, verbatim. Four hex values, no more.
- * Field journal, not social app — the restraint is the design.
+ * The wireframe supersedes the old PLAN.md palette: deep blue-green base,
+ * bone ink, ORANGE accent (#FF5A1F). Square corners everywhere — the only
+ * circles are avatars, record buttons and map dots. Elevation is a 1px
+ * hairline plus a solid surface fill; no shadows except the accent glow
+ * behind the mic button.
  */
 
 export const palette = {
-  /** Base. The deep green everything sits on. */
-  base: '#0F1E17',
-  /** Contour lines and primary type. Bone white. */
-  bone: '#E8E3D8',
-  /** Accent — unlocked, live, in range. Amber. */
-  amber: '#D9A441',
-  /** Alert / unresolved. Terracotta. */
-  terracotta: '#C0563A',
+  /** Base. Every screen background. */
+  base: '#091C1E',
+  /** Darker sheet/modal background (save screen, share sheet). */
+  baseDeep: '#07171A',
+  /** Solid raised surface — avatar circles, AI bubbles, stat cards. */
+  surface: '#0C2528',
+  /** Ink. All primary type and line-work. */
+  ink: '#EAE6DA',
+  /** Accent — live, active, recording, unlocked. Orange. */
+  accent: '#FF5A1F',
 } as const;
 
 /**
  * Semantic aliases. Use these in components so a palette change is one edit.
- * A per-Space accent overrides `accent` at render time (E5) — never hardcode
- * amber in a component that can belong to a Space.
  */
 export const colors = {
   background: palette.base,
-  contour: palette.bone,
-  accent: palette.amber,
-  unresolved: palette.terracotta,
+  backgroundDeep: palette.baseDeep,
+  surfaceSolid: palette.surface,
+  contour: palette.ink,
+  accent: palette.accent,
 
-  /**
-   * The opacity ladder — bone at alpha. These six values are the whole
-   * secondary palette. Any other alpha is a bug: pick the nearest rung.
-   */
-  t100: palette.bone,
-  /** Body support, settled waveform stones, empty-state copy, Space wordmark. */
-  t60: 'rgba(232, 227, 216, 0.60)',
-  /** Metadata — author names, timestamps, distances, unplayed waveform. */
-  t40: 'rgba(232, 227, 216, 0.40)',
-  /** Map contour lines, skeleton loaders. */
-  t20: 'rgba(232, 227, 216, 0.20)',
-  /** Hairlines, dividers, card borders. */
-  t12: 'rgba(232, 227, 216, 0.12)',
-  /** Elevated surface fill over base (sheets, cards). No shadows — this is it. */
-  t06: 'rgba(232, 227, 216, 0.06)',
+  /** Ink at alpha — the whole secondary palette. Pick the nearest rung. */
+  t100: palette.ink,
+  t70: 'rgba(234, 230, 218, 0.70)',
+  t60: 'rgba(234, 230, 218, 0.60)',
+  t45: 'rgba(234, 230, 218, 0.45)',
+  t40: 'rgba(234, 230, 218, 0.40)',
+  t35: 'rgba(234, 230, 218, 0.35)',
+  t25: 'rgba(234, 230, 218, 0.25)',
+  t18: 'rgba(234, 230, 218, 0.18)',
+  t16: 'rgba(234, 230, 218, 0.16)',
+  t12: 'rgba(234, 230, 218, 0.12)',
+  t08: 'rgba(234, 230, 218, 0.08)',
 
-  // Semantic aliases onto the ladder. Reach for these in type styles.
-  text: palette.bone,
-  textMuted: 'rgba(232, 227, 216, 0.60)',
-  textFaint: 'rgba(232, 227, 216, 0.40)',
-  hairline: 'rgba(232, 227, 216, 0.12)',
-  surface: 'rgba(232, 227, 216, 0.06)',
+  /** Accent at alpha — rings, glows, heat map circles, active borders. */
+  accent50: 'rgba(255, 90, 31, 0.50)',
+  accent30: 'rgba(255, 90, 31, 0.30)',
+  accent18: 'rgba(255, 90, 31, 0.18)',
+  accent12: 'rgba(255, 90, 31, 0.12)',
+
+  // Semantic aliases onto the ladder.
+  text: palette.ink,
+  textMuted: 'rgba(234, 230, 218, 0.60)',
+  textFaint: 'rgba(234, 230, 218, 0.45)',
+  hairline: 'rgba(234, 230, 218, 0.16)',
+  hairlineFaint: 'rgba(234, 230, 218, 0.08)',
+  border: 'rgba(234, 230, 218, 0.25)',
+  surface: 'rgba(234, 230, 218, 0.06)',
+  /** Translucent bar over the map. */
+  scrim: 'rgba(9, 28, 30, 0.90)',
 } as const;
 
 /**
- * Never more than two type sizes on a screen. Timestamps and distances are
- * mono at 11 with letterspacing — that is the only place mono appears.
+ * Font families. General Sans is not bundled — the system face (SF Pro on
+ * iOS) with matching weights is the sanctioned fallback. Space Mono and
+ * Instrument Serif italic load in app/_layout.tsx via expo-font; if the
+ * fonts have not resolved yet these families silently fall back, so no
+ * screen needs to gate on font readiness.
  */
-export const type: Record<'display' | 'body' | 'small' | 'mono', TextStyle> = {
-  /** Screen title. One per screen. */
-  display: { fontSize: 28, lineHeight: 45, fontWeight: '500' },
-  body: { fontSize: 17, lineHeight: 27 },
-  /** Secondary lines inside a card. */
+export const fonts = {
+  /** Labels, timestamps, distances, codes. Always uppercase + letterspaced. */
+  mono: 'SpaceMono_400Regular',
+  monoBold: 'SpaceMono_700Bold',
+  /** Display headings — "Leave a note where it happened". Always italic. */
+  serif: 'InstrumentSerif_400Regular_Italic',
+} as const;
+
+/**
+ * Type scale from the wireframe. `mono` variants carry the Space Mono face
+ * and em-tracked uppercase; everything else is the system sans.
+ */
+export const type: Record<
+  'hero' | 'displaySerif' | 'title' | 'heading' | 'body' | 'small' | 'mono' | 'monoSmall' | 'monoTiny',
+  TextStyle
+> = {
+  /** Big numerals — the recording timer. */
+  hero: { fontSize: 52, lineHeight: 56, fontWeight: '600', letterSpacing: -1, fontVariant: ['tabular-nums'] },
+  /** Serif italic display — splash wordmark, sheet titles. */
+  displaySerif: { fontFamily: fonts.serif, fontStyle: 'italic', fontSize: 40, lineHeight: 46 },
+  /** Screen title — "Valve on the north wall". */
+  title: { fontSize: 26, lineHeight: 32, fontWeight: '600', letterSpacing: -0.3 },
+  /** Section/card heading — note row titles, "Projects". */
+  heading: { fontSize: 16, lineHeight: 22, fontWeight: '500' },
+  /** Default body / transcript text. */
+  body: { fontSize: 16, lineHeight: 28 },
+  /** Secondary lines inside a row. */
   small: { fontSize: 13, lineHeight: 21 },
-  /**
-   * Timestamps, distances, stone counts, join codes, author names. Nothing
-   * else. Uppercase is baked in — callers pass their string as-is and never
-   * hand-uppercase it. 40% opacity unless it is a join code (100%) or a
-   * `HERE` label (amber, 100%).
-   */
+  /** Mono label. Callers pass strings as-is; uppercase is baked in. */
   mono: {
+    fontFamily: fonts.mono,
     fontSize: 11,
-    lineHeight: 18,
+    lineHeight: 16,
+    letterSpacing: 1.6,
+    textTransform: 'uppercase',
+    fontVariant: ['tabular-nums'],
+  },
+  /** Small mono — chips, bylines. */
+  monoSmall: {
+    fontFamily: fonts.mono,
+    fontSize: 10,
+    lineHeight: 14,
+    letterSpacing: 1.3,
+    textTransform: 'uppercase',
+    fontVariant: ['tabular-nums'],
+  },
+  /** Tiny mono — badges inside rows. */
+  monoTiny: {
+    fontFamily: fonts.mono,
+    fontSize: 9,
+    lineHeight: 12,
     letterSpacing: 1.1,
     textTransform: 'uppercase',
     fontVariant: ['tabular-nums'],
@@ -79,43 +129,44 @@ export const type: Record<'display' | 'body' | 'small' | 'mono', TextStyle> = {
 };
 
 /**
- * Layout. The vertical rhythm unit is 8pt and all vertical spacing is a
- * multiple of it — there is deliberately no 4pt step. Corner radius has
- * exactly three values; no others.
+ * Layout. Corners are SQUARE — radius exists only for circles (avatar, mic,
+ * play buttons, map dots): use half the element size, or `s.r.circle` for
+ * "make it round".
  */
 export const s = {
   /** Screen horizontal gutter. */
-  gutter: 24,
+  gutter: 22,
   /** Card / sheet padding. */
-  pad: 20,
-  /** Vertical rhythm unit. Multiply it; do not subdivide it. */
+  pad: 18,
+  /** Vertical rhythm unit. */
   unit: 8,
-  /** Gap between stones in a thread. */
-  thread: 24,
   /** Minimum tap target, 44 x 44. */
   tap: 44,
-  /** Max text measure, in characters. */
-  measure: 62,
   r: {
-    /** Waveform stones. */
-    stone: 2,
-    /** Chips, buttons, thumbnails. */
-    chip: 8,
-    /** Bottom sheets, full cards. */
-    sheet: 16,
+    /** Everything rectangular. */
+    square: 0,
+    /** "Make it a circle" — pair with equal width/height. */
+    circle: 999,
   },
+  /** The primary record button diameter. */
+  mic: 76,
+  /** Secondary nav circle diameter. */
+  navCircle: 52,
 } as const;
 
-/**
- * @deprecated Legacy alias for `s`. Multiples of the 8pt unit only — the 4pt
- * step is gone. Prefer `s.gutter` / `s.pad` / `s.unit` and the `s.r` radii,
- * which say what the number is for instead of how big it is.
- */
+/** @deprecated Legacy alias for `s`. */
 export const space = {
   sm: s.unit,
   md: s.unit * 2,
   lg: s.gutter,
   xl: s.unit * 5,
+} as const;
+
+/** Motion: three durations, one easing (ease-out). */
+export const motion = {
+  state: 200,
+  reveal: 260,
+  distance: 400,
 } as const;
 
 /**
@@ -124,6 +175,5 @@ export const space = {
  * from the server. Never hardcode 30 in a render path.
  */
 export const proximity = {
-  /** Beyond this, a cairn is a glyph and a distance number. Nothing else. */
   previewRadiusM: 200,
 } as const;
