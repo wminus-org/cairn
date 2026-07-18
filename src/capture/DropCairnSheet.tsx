@@ -130,6 +130,10 @@ function formatCoords(coords: PositionCoords): string {
  * fix, so it gets an instruction rather than an apology.
  */
 function describeFailure(err: unknown): string {
+  // Always dump the real thing to Metro. A swallowed error costs more time on
+  // a build day than an ugly log line ever will.
+  console.error('[cairn] drop failed:', err);
+
   if (isCairnApiError(err)) {
     switch (err.kind) {
       case 'too-far':
@@ -139,10 +143,15 @@ function describeFailure(err: unknown): string {
       case 'unauthenticated':
         return 'Signed out. Reopen the app and try again.';
       default:
-        return 'That did not save.';
+        // Surface the underlying message rather than hiding it. Every server
+        // piece has been verified working in isolation, so whatever lands here
+        // is the actual bug and we need to be able to read it off the screen.
+        return `That did not save.\n\n[${err.rpc}${err.code ? ` ${err.code}` : ''}] ${err.message}`;
     }
   }
-  return 'That did not save.';
+  const detail =
+    err instanceof Error ? err.message : typeof err === 'string' ? err : JSON.stringify(err);
+  return `That did not save.\n\n${detail}`;
 }
 
 // --- Waveform ---------------------------------------------------------------
