@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/icon.png" width="128" alt="Cairn" />
+<img src="https://external-content.duckduckgo.com/iu/?u=https%3A%2F%2Fimages.rawpixel.com%2Fdark_image_png_social_square%2FcHJpdmF0ZS9sci9pbWFnZXMvd2Vic2l0ZS8yMDI1LTA3L3NyLWltYWdlLTIzMDcyNS1tdC1zLTAxNF8xLnBuZw.png&f=1&nofb=1&ipt=268ce390f2782cd2a30c575774c27ce6986c058bdfbedf4e06dbbf711554e272" width="140" alt="Cairn" />
 
 # Cairn
 
