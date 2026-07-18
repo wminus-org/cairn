@@ -1,0 +1,46 @@
+{
+  "name": "cairn",
+  "version": "1.0.0",
+  "main": "expo-router/entry",
+  "private": true,
+  "scripts": {
+    "start": "expo start --dev-client",
+    "ios": "expo run:ios --device",
+    "prebuild": "expo prebuild --platform ios --clean",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "@rnmapbox/maps": "^10.3.2",
+    "@supabase/supabase-js": "^2.110.7",
+    "base64-arraybuffer": "^1.0.2",
+    "expo": "~57.0.7",
+    "expo-audio": "~57.0.2",
+    "expo-blur": "~57.0.2",
+    "expo-camera": "~57.0.3",
+    "expo-constants": "~57.0.6",
+    "expo-dev-client": "~57.0.7",
+    "expo-file-system": "~57.0.1",
+    "expo-image": "~57.0.1",
+    "expo-image-manipulator": "~57.0.5",
+    "expo-linking": "~57.0.3",
+    "expo-location": "~57.0.5",
+    "expo-router": "~57.0.7",
+    "expo-speech": "~57.0.1",
+    "expo-status-bar": "~57.0.1",
+    "react": "19.2.3",
+    "react-native": "0.86.0",
+    "react-native-gesture-handler": "~2.32.0",
+    "react-native-reanimated": "4.5.0",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-screens": "4.25.2",
+    "react-native-url-polyfill": "^4.0.0"
+  },
+  "overrides": {
+    "react-dom": "19.2.3"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "typescript": "~6.0.3"
+  }
+}
