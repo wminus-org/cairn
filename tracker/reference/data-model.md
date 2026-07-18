@@ -1,6 +1,6 @@
 # Data model
 
-Seven tables, one SQL paste. This is the file [`CRN-002`](../tickets/) points at — run [the block below](#the-paste) in the Supabase SQL editor at 10:30 and do not hand-edit the schema again unless something is actually broken.
+Seven tables, one SQL paste. This is the file [`CRN-002`](../tickets/) points at — apply [the migrations](#the-paste) in the Supabase SQL editor at 10:30 and do not hand-edit the schema again unless something is actually broken.
 
 Source of truth is [`PLAN.md`](../PLAN.md). Every column here maps to a line in its data model section, with three flagged exceptions ([`pins.unresolved`, `stones.image_aspect_ratio`, `spaces.wordmark`](#three-columns-beyond-the-plans-list)).
 
@@ -18,138 +18,14 @@ Cairn positions and stone counts are public to any authenticated client. Audio U
 
 ## The paste
 
-```sql
--- CAIRN schema. One paste. Supabase SQL editor, as the project owner.
--- Safe to re-run.
+**The paste lives in [`supabase/migrations/`](../../supabase/migrations/), not here.** Apply `0001_schema.sql`, `0002_storage.sql`, `0003_auth.sql` and `0004_proximity_gate.sql` in that order, in the Supabase SQL editor, as the project owner.
 
-create extension if not exists pgcrypto;
+This document used to carry its own copy of the schema. That copy drifted from the migration — it was missing the `spaces.accent_hex` format check and indexed `space_members` differently — and because both used `create table if not exists`, running the wrong one first would silently leave you with a schema that *looked* applied and behaved differently. One canonical source, and it is the migration, because that is the thing that has actually been executed and tested.
 
--- 1. profiles -----------------------------------------------------------
-create table if not exists public.profiles (
-  id           uuid primary key references auth.users(id) on delete cascade,
-  display_name text not null default 'Walker',
-  avatar_url   text,
-  created_at   timestamptz not null default now()
-);
+The migrations are verified against a real Postgres by [`supabase/tests/`](../../supabase/tests/) — 14 assertions on the proximity gate and 11 on path forgery. If you change the schema, run those.
 
--- 2. spaces -------------------------------------------------------------
-create table if not exists public.spaces (
-  id         uuid primary key default gen_random_uuid(),
-  name       text not null,
-  accent_hex text not null default '#D9A441',
-  wordmark   text,
-  join_code  text not null unique check (join_code ~ '^[A-Z0-9]{6}$'),
-  created_by uuid references public.profiles(id) on delete set null,
-  created_at timestamptz not null default now()
-);
+What follows is the reasoning behind each column: why it exists, what it costs, and what breaks without it. Read it to understand the model; run the migration to build it.
 
--- 3. space_members ------------------------------------------------------
-create table if not exists public.space_members (
-  space_id   uuid not null references public.spaces(id) on delete cascade,
-  user_id    uuid not null references public.profiles(id) on delete cascade,
-  role       text not null default 'member' check (role in ('owner','member')),
-  created_at timestamptz not null default now(),
-  primary key (space_id, user_id)
-);
-
--- 4. cairns -------------------------------------------------------------
-create table if not exists public.cairns (
-  id         uuid primary key default gen_random_uuid(),
-  space_id   uuid references public.spaces(id) on delete cascade,
-  lat        double precision not null check (lat between -90 and 90),
-  lng        double precision not null check (lng between -180 and 180),
-  title      text,
-  created_by uuid references public.profiles(id) on delete set null,
-  created_at timestamptz not null default now(),
-  radius_m   integer not null default 30 check (radius_m > 0)
-);
-
--- 5. stones -------------------------------------------------------------
-create table if not exists public.stones (
-  id         uuid primary key default gen_random_uuid(),
-  cairn_id   uuid not null references public.cairns(id) on delete cascade,
-  author_id  uuid references public.profiles(id) on delete set null,
-  kind       text not null check (kind in ('voice','photo','text')),
-  body_text  text,
-  audio_url  text,
-  image_url  text,
-  image_aspect_ratio numeric,
-  transcript text,
-  created_at timestamptz not null default now()
-);
-
--- 6. pins ---------------------------------------------------------------
-create table if not exists public.pins (
-  id         uuid primary key default gen_random_uuid(),
-  stone_id   uuid not null references public.stones(id) on delete cascade,
-  x          double precision not null check (x >= 0 and x <= 1),
-  y          double precision not null check (y >= 0 and y <= 1),
-  note_text  text,
-  audio_url  text,
-  transcript text,
-  unresolved boolean not null default false,  -- terracotta flag; see note
-  created_at timestamptz not null default now()
-);
-
--- 7. briefings ----------------------------------------------------------
-create table if not exists public.briefings (
-  cairn_id     uuid primary key references public.cairns(id) on delete cascade,
-  generated_at timestamptz not null default now(),
-  summary_text text,
-  audio_url    text
-);
-
--- Indexes ---------------------------------------------------------------
-create index if not exists cairns_space_id_idx      on public.cairns (space_id);
-create index if not exists stones_cairn_created_idx on public.stones (cairn_id, created_at);
-create index if not exists pins_stone_id_idx        on public.pins (stone_id);
-create index if not exists space_members_user_idx   on public.space_members (user_id);
-
--- RLS: default deny on everything. No policies yet, deliberately.
-alter table public.profiles      enable row level security;
-alter table public.spaces        enable row level security;
-alter table public.space_members enable row level security;
-alter table public.cairns        enable row level security;
-alter table public.stones        enable row level security;
-alter table public.pins          enable row level security;
-alter table public.briefings     enable row level security;
-
--- Distance helper. Both proximity RPCs call this. Metres, haversine,
--- spherical earth. Accurate to ~0.5% which is far better than phone GPS.
-create or replace function public.distance_m(
-  lat1 double precision, lng1 double precision,
-  lat2 double precision, lng2 double precision
-) returns double precision
-language sql immutable
-as $$
-  select 6371000 * 2 * asin(sqrt(
-    power(sin(radians(lat2 - lat1) / 2), 2) +
-    cos(radians(lat1)) * cos(radians(lat2)) *
-    power(sin(radians(lng2 - lng1) / 2), 2)
-  ));
-$$;
-
--- Auto-create a profile row on signup. Without this, author_id FKs fail
--- on the first stone and you debug it at 11:50.
-create or replace function public.handle_new_user()
-returns trigger
-language plpgsql
-security definer
-set search_path = public, pg_temp
-as $$
-begin
-  insert into public.profiles (id, display_name)
-  values (new.id, coalesce(new.raw_user_meta_data->>'display_name', 'Walker'))
-  on conflict (id) do nothing;
-  return new;
-end;
-$$;
-
-drop trigger if exists on_auth_user_created on auth.users;
-create trigger on_auth_user_created
-  after insert on auth.users
-  for each row execute function public.handle_new_user();
-```
 
 ---
 
