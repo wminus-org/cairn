@@ -21,7 +21,7 @@ import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from 'expo-au
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Speech from 'expo-speech';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Animated, Easing, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
@@ -34,14 +34,9 @@ import {
   type CairnStone,
 } from '../../src/lib/cairnApi';
 import { usePosition, type PositionCoords } from '../../src/lib/usePosition';
+import CairnGlyph from '../../src/thread/CairnGlyph';
 import StoneRow, { type StoneDegrade, type StonePlayback } from '../../src/thread/StoneRow';
-import {
-  approachProgress,
-  blurIntensity,
-  formatDistance,
-  metresToGo,
-  stackOpacity,
-} from '../../src/thread/band';
+import { approachProgress, blurIntensity, formatDistance, metresToGo } from '../../src/thread/band';
 import { colors, s, type } from '../../src/theme';
 
 /**
@@ -63,6 +58,13 @@ const IDLE_REFETCH_MS = 12000;
 
 /** How often the idle check runs. Not how often we fetch — see the throttle. */
 const TICK_MS = 3000;
+
+/**
+ * Three durations in the whole app and one easing. This screen only ever uses
+ * the long one: every animation here is distance-driven interpolation.
+ */
+const EASE_MS = 400;
+const EASE = Easing.out(Easing.cubic);
 
 /** Rough metres between two fixes. Only ever used to decide whether to refetch. */
 function metresBetween(a: PositionCoords, b: PositionCoords): number {
@@ -399,12 +401,103 @@ export default function CairnThreadScreen() {
     );
   }, [detail]);
 
-  /** One curve for the whole list rather than one per row. */
-  const degrade = useMemo<StoneDegrade | null>(() => {
+  // --- The distance-driven ease ---------------------------------------------
+  //
+  // `t` arrives in steps, because the refetch throttle deliberately batches
+  // position fixes into one round trip every few seconds. Rendering those steps
+  // raw would make the approach band flick between two blurs, which reads as a
+  // state machine; the design system's answer is 400ms ease-out on every
+  // t-driven property, so GPS jitter reads as breathing.
+  //
+  // Two values driven together, and the split is the point:
+  //  - `tVisual` runs on the native driver and only ever feeds `opacity`, so the
+  //    eleven-stone thread eases without React re-rendering at all.
+  //  - `tLayout` cannot (it drives a percentage width), so it stays on the JS
+  //    driver and is the one thing that pays for the animation.
+  const tLayout = useRef(new Animated.Value(0)).current;
+  const tVisual = useRef(new Animated.Value(0)).current;
+
+  /** The server's `t`, or null when there is no approach band to render. */
+  const targetT = useMemo(() => {
     if (!detail || detail.band !== 'approaching') return null;
-    const t = approachProgress(detail.distance_m, detail.radius_m);
-    return { blur: blurIntensity(t), opacity: stackOpacity(t) };
+    return approachProgress(detail.distance_m, detail.radius_m);
   }, [detail]);
+
+  useEffect(() => {
+    if (targetT === null) return;
+    const timing = { duration: EASE_MS, easing: EASE, isInteraction: false };
+    Animated.parallel([
+      Animated.timing(tLayout, { ...timing, toValue: targetT, useNativeDriver: false }),
+      Animated.timing(tVisual, { ...timing, toValue: targetT, useNativeDriver: true }),
+    ]).start();
+  }, [targetT, tLayout, tVisual]);
+
+  /**
+   * Blur is an expo-blur *prop*, not a style, so it cannot ride the driver — it
+   * has to come back through React. Quantising to steps of 5 caps a full 90 → 0
+   * sweep at eighteen renders instead of ~24 per second, and at these radii a
+   * five-point step in blur is not a step anybody can see.
+   */
+  const [blur, setBlur] = useState(90);
+  useEffect(() => {
+    const id = tLayout.addListener(({ value }) => {
+      const next = Math.round(blurIntensity(value) / 5) * 5;
+      setBlur((prev) => (prev === next ? prev : next));
+    });
+    return () => tLayout.removeListener(id);
+  }, [tLayout]);
+
+  /**
+   * The synthesised stack fades in over 200 → 180m so crossing the outer edge is
+   * a fade, not a pop — `stackOpacity`'s `clamp(t * 8.5, 0, 1)` expressed as an
+   * interpolation, so the curve lives on the animated node instead of being
+   * recomputed per frame.
+   */
+  const stackOpacity = useMemo(
+    () =>
+      tVisual.interpolate({
+        inputRange: [0, 1 / 8.5, 1],
+        outputRange: [0, 1, 1],
+      }),
+    [tVisual],
+  );
+
+  /** One curve for the whole list rather than one per row. */
+  const degrade = useMemo<StoneDegrade | null>(
+    () => (targetT === null ? null : { blur, opacity: stackOpacity }),
+    [blur, stackOpacity, targetT],
+  );
+
+  /**
+   * Arrival. The unlocked band is the payoff of the entire distance mechanic and
+   * it should land as one — the thread settles up 8pt and resolves over 400ms
+   * rather than appearing mid-scroll as though it had always been there. Fires
+   * on the transition into `unlocked`, including a cold open while already
+   * standing at the cairn, which is how the last demo cairn is opened.
+   */
+  const settle = useRef(new Animated.Value(0)).current;
+  const lastBand = useRef<string | null>(null);
+  useEffect(() => {
+    const band = detail?.band ?? null;
+    if (band === 'unlocked' && lastBand.current !== 'unlocked') {
+      settle.setValue(0);
+      Animated.timing(settle, {
+        toValue: 1,
+        duration: EASE_MS,
+        easing: EASE,
+        useNativeDriver: true,
+      }).start();
+    }
+    lastBand.current = band;
+  }, [detail?.band, settle]);
+
+  const settleStyle = useMemo(
+    () => ({
+      opacity: settle,
+      transform: [{ translateY: settle.interpolate({ inputRange: [0, 1], outputRange: [8, 0] }) }],
+    }),
+    [settle],
+  );
 
   const goBack = useCallback(() => {
     // A deep link or a cold start can land here with nothing behind it.
@@ -460,9 +553,23 @@ export default function CairnThreadScreen() {
     [clipProgress, onToggle, playingStoneId, unlocked],
   );
 
+  /**
+   * Only knowable once unlocked — `pins` does not exist in the stub band. A
+   * cairn that holds an open question says so at the top, in terracotta *and*
+   * in words, because the flag has to survive a projector and a colourblind
+   * viewer alike.
+   */
+  const hasUnresolved = useMemo(
+    () => stones.some((stone) => (stone.pins ?? []).some((pin) => pin.unresolved)),
+    [stones],
+  );
+
   return (
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
       <View style={styles.header}>
+        {/* Not a chrome button — no pill, no circle, no fill. Two hairlines: a
+            45-degree tick and a rule running back the way you came. The design
+            system allows exactly this and no icon set. */}
         <Pressable
           onPress={goBack}
           hitSlop={s.unit * 2}
@@ -470,8 +577,10 @@ export default function CairnThreadScreen() {
           accessibilityRole="button"
           accessibilityLabel="Back to the map"
         >
-          {/* No icon set. A chevron is a 1pt line at 45 degrees. */}
-          <View style={styles.chevron} />
+          <View style={styles.backArrow}>
+            <View style={styles.backTick} />
+            <View style={styles.backRule} />
+          </View>
         </Pressable>
 
         <Text style={styles.title} numberOfLines={2}>
@@ -481,8 +590,9 @@ export default function CairnThreadScreen() {
         {detail ? (
           <View style={styles.metaRow}>
             <Text style={styles.meta}>
-              {`${detail.stone_count} ${detail.stone_count === 1 ? 'stone' : 'stones'} · `}
+              {`${detail.stone_count} ${detail.stone_count === 1 ? 'stone' : 'stones'}`}
             </Text>
+            <Text style={styles.meta}>·</Text>
             {/* HERE is the payoff of the whole distance mechanic and the only
                 amber on this screen. It keys off the server's band, never off
                 comparing distance_m to radius_m here — the word and the content
@@ -492,11 +602,36 @@ export default function CairnThreadScreen() {
             ) : (
               <Text style={styles.meta}>{formatDistance(detail.distance_m)}</Text>
             )}
+            {hasUnresolved ? (
+              <>
+                <Text style={styles.meta}>·</Text>
+                <Text style={styles.unresolved}>unresolved</Text>
+              </>
+            ) : null}
+          </View>
+        ) : null}
+
+        {/* Walking is the loading bar, rendered as one hairline. Contour, never
+            amber: this is the approach, not the arrival. It disappears entirely
+            in the other two bands rather than sitting empty or full. */}
+        {targetT !== null ? (
+          <View
+            style={styles.approachTrack}
+            accessibilityRole="progressbar"
+            accessibilityLabel="Distance to unlock"
+            accessibilityValue={{ min: 0, max: 100, now: Math.round(targetT * 100) }}
+          >
+            <Animated.View
+              style={[
+                styles.approachFill,
+                { width: tLayout.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }) },
+              ]}
+            />
           </View>
         ) : null}
 
         {errorText || playbackError ? (
-          <Text style={styles.meta}>{errorText ?? playbackError}</Text>
+          <Text style={styles.copy}>{errorText ?? playbackError}</Text>
         ) : null}
       </View>
 
@@ -512,6 +647,7 @@ export default function CairnThreadScreen() {
           stones={stones}
           degrade={degrade}
           unlocked={!!unlocked}
+          settleStyle={settleStyle}
           playbackFor={playbackFor}
           transcribing={transcribing}
           brief={brief}
@@ -532,6 +668,7 @@ function ThreadBody({
   stones,
   degrade,
   unlocked,
+  settleStyle,
   playbackFor,
   transcribing,
   brief,
@@ -543,6 +680,7 @@ function ThreadBody({
   stones: CairnStone[];
   degrade: StoneDegrade | null;
   unlocked: boolean;
+  settleStyle: { opacity: Animated.Value; transform: { translateY: Animated.AnimatedInterpolation<number> }[] };
   playbackFor: (stone: CairnStone) => StonePlayback | null;
   transcribing: ReadonlySet<string>;
   brief: BriefControl | null;
@@ -552,13 +690,22 @@ function ThreadBody({
     if (status === 'denied') {
       return <Text style={styles.copy}>Location is off. Cairn only works where you are standing.</Text>;
     }
-    // No spinner. A skeleton in the shape of the thing that is loading.
+    // No spinner. A skeleton in the shape of the thing that is loading — which
+    // here means the spine too, so the thread does not jump sideways by 24pt
+    // the moment the real stones arrive.
     return (
       <View style={styles.skeletonThread}>
         {[0, 1, 2].map((row) => (
-          <View key={row} style={styles.skeletonStone}>
-            <View style={[styles.skeletonLine, styles.skeletonMeta]} />
-            <View style={styles.skeletonLine} />
+          <View key={row} style={styles.skeletonRow}>
+            <View style={styles.skeletonRail}>
+              <View
+                style={[styles.skeletonSpine, { top: row === 0 ? 9 : 0, bottom: row === 2 ? 0 : -s.thread }]}
+              />
+            </View>
+            <View style={styles.skeletonStone}>
+              <View style={[styles.skeletonLine, styles.skeletonMeta]} />
+              <View style={styles.skeletonLine} />
+            </View>
           </View>
         ))}
       </View>
@@ -585,15 +732,28 @@ function ThreadBody({
   }
 
   if (detail.band === 'far') {
-    // No stones, no stubs, no shapes. The payload contains a count and a
-    // distance, and that is all this state is allowed to show.
+    // No stones, no stubs, no shapes, no skeletons. The payload contains a count
+    // and a distance, and that is all this state is allowed to show — so it
+    // shows the cairn as an object: a sealed stack whose height *is* the count,
+    // sitting on a hairline of ground, and a number of metres to walk.
+    //
+    // `radius_m` is read off the response, never assumed to be 30. A meeting-room
+    // cairn seeded with an 80m radius must say "walk 120 m closer" and then open
+    // when it says it will.
     const toGo = metresToGo(detail.distance_m, detail.radius_m);
     return (
-      <View style={styles.lockedBlock}>
+      <View style={styles.sealed}>
+        {detail.stone_count > 0 ? (
+          <View style={styles.sealedGlyph}>
+            <CairnGlyph stoneCount={detail.stone_count} scale={3} color={colors.t60} />
+            <View style={styles.ground} />
+          </View>
+        ) : null}
+
         <Text style={styles.copy}>
           {detail.stone_count === 0
             ? 'Nothing has been stacked here yet.'
-            : `${detail.stone_count} ${detail.stone_count === 1 ? 'stone is' : 'stones are'} stacked here. You have to be standing at the cairn to hear them.`}
+            : 'Sealed until you are standing at it.'}
         </Text>
         <Text style={styles.meta}>{`walk ${toGo} m closer`}</Text>
       </View>
@@ -604,29 +764,42 @@ function ThreadBody({
     return <Text style={styles.copy}>Nothing has been stacked here yet.</Text>;
   }
 
-  return (
-    <View style={styles.thread}>
-      {detail.band === 'approaching' ? (
+  const rows = stones.map((stone, i) => (
+    <StoneRow
+      key={stone.id}
+      stone={stone}
+      unlocked={unlocked}
+      degrade={degrade}
+      playback={playbackFor(stone)}
+      transcribing={transcribing.has(stone.id)}
+      isNewest={i === 0}
+      isOldest={i === stones.length - 1}
+    />
+  ));
+
+  if (detail.band === 'approaching') {
+    // Bylines stay sharp. That is deliberate and it is the honest reading of the
+    // stub payload: the server sent who and when, so the walker gets to see four
+    // people across three months and nothing they said. The blur is only over
+    // the parts that do not exist yet.
+    return (
+      <View style={styles.thread}>
         <Text style={styles.copy}>
           {`Close, but not there. Come within ${detail.radius_m} m and this opens.`}
         </Text>
-      ) : null}
+        {rows}
+      </View>
+    );
+  }
 
+  return (
+    <Animated.View style={[styles.thread, settleStyle]}>
       {/* Above the stones, so the summary is on screen without scrolling —
           DEMO.md's stage fallback is the presenter reading it aloud. */}
       {brief ? <BriefMe brief={brief} /> : null}
 
-      {stones.map((stone) => (
-        <StoneRow
-          key={stone.id}
-          stone={stone}
-          unlocked={unlocked}
-          degrade={degrade}
-          playback={playbackFor(stone)}
-          transcribing={transcribing.has(stone.id)}
-        />
-      ))}
-    </View>
+      {rows}
+    </Animated.View>
   );
 }
 
@@ -690,40 +863,65 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.hairline,
   },
   backTarget: {
-    width: s.tap,
+    // Wider than tall so the whole arrow is inside the target, and pulled left
+    // so the tick optically aligns with the title's left edge rather than the
+    // tap box's.
+    width: s.tap + s.unit * 2,
     height: s.tap,
-    marginLeft: -s.unit * 1.5,
-    alignItems: 'center',
+    marginLeft: -s.unit,
     justifyContent: 'center',
   },
-  chevron: {
-    width: 11,
-    height: 11,
+  backArrow: { flexDirection: 'row', alignItems: 'center' },
+  backTick: {
+    width: 9,
+    height: 9,
     borderLeftWidth: 1,
     borderBottomWidth: 1,
     borderColor: colors.t60,
     transform: [{ rotate: '45deg' }],
   },
+  // The rotated tick's visual point sits ~1pt past its layout box, so the rule
+  // starts there rather than at the box edge.
+  backRule: { width: 16, height: 1, marginLeft: 1, backgroundColor: colors.t60 },
+
   title: { ...type.display, color: colors.text },
-  metaRow: { flexDirection: 'row', alignItems: 'center' },
+  metaRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: s.unit },
   meta: { ...type.mono, color: colors.textFaint },
   here: { ...type.mono, color: colors.accent },
+  unresolved: { ...type.mono, color: colors.unresolved },
+
+  approachTrack: {
+    height: 1,
+    marginTop: s.unit,
+    backgroundColor: colors.hairline,
+    overflow: 'hidden',
+  },
+  approachFill: { height: 1, backgroundColor: colors.t60 },
+
   scroll: { flex: 1 },
   scrollContent: { paddingHorizontal: s.gutter, paddingVertical: s.unit * 3, paddingBottom: s.unit * 6 },
   thread: { gap: s.thread },
-  lockedBlock: { gap: s.unit * 2 },
+
+  sealed: { gap: s.unit * 2, alignItems: 'flex-start' },
+  sealedGlyph: { alignSelf: 'stretch', gap: s.unit, marginBottom: s.unit * 2 },
+  // The ground the stack sits on. One hairline; that is the whole device.
+  ground: { height: 1, backgroundColor: colors.hairline },
+
   errorBlock: { gap: s.unit * 2, alignItems: 'flex-start' },
   copy: { ...type.body, color: colors.t60 },
   retry: {
     paddingHorizontal: s.pad,
-    paddingVertical: s.unit * 1.5,
+    // 44pt tap target, not 44pt of padding.
+    minHeight: s.tap,
+    justifyContent: 'center',
     borderRadius: s.r.chip,
     // Primary buttons are contour-on-base with a 1pt border. Never an amber
     // fill — amber is a proximity signal, not chrome.
     borderWidth: 1,
     borderColor: colors.hairline,
   },
-  retryLabel: { ...type.mono, color: colors.text },
+  retryLabel: { ...type.body, color: colors.text },
+
   briefBlock: { gap: s.unit * 1.5, alignItems: 'flex-start' },
   briefButton: {
     paddingHorizontal: s.pad,
@@ -740,8 +938,12 @@ const styles = StyleSheet.create({
   briefLabelSpeaking: { ...type.mono, color: colors.accent },
   /** Small and at 60% — see BriefMe. Deliberately not a reading surface. */
   briefText: { ...type.small, color: colors.t60 },
+
   skeletonThread: { gap: s.thread },
-  skeletonStone: { gap: s.unit },
+  skeletonRow: { flexDirection: 'row' },
+  skeletonRail: { width: 12 },
+  skeletonSpine: { position: 'absolute', left: 5.5, width: 1, backgroundColor: colors.hairline },
+  skeletonStone: { flex: 1, marginLeft: 12, gap: s.unit },
   skeletonLine: { height: 10, borderRadius: s.r.stone, backgroundColor: colors.t20 },
   skeletonMeta: { width: '40%' },
 });

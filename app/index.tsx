@@ -2,9 +2,15 @@
  * The map screen.
  *
  * Apple Maps via react-native-maps, chosen so this runs in Expo Go with no
- * token and no native build. Map styling is deliberately abandoned for now —
- * the contour look is a later problem. This screen's job is: show where the
- * cairns are, show where you are, and open one when you tap it.
+ * token and no native build. This screen's job is: show where the cairns are,
+ * show where you are, and open one when you tap it.
+ *
+ * MapKit cannot be restyled, so the contour base from the design system is not
+ * available and is not coming. Every bit of craft therefore lives in what sits
+ * *on* the tiles and *around* them — the stacked-stone glyph, the distance
+ * readout under it, the scrim that seats bone type against tiles we do not
+ * control. Each of those is in src/map/ and each is built to survive both a
+ * white tile and a black one on its own, without relying on the scrim.
  *
  * The two rules that survive from the Mapbox version, because they are
  * architecture and not aesthetics:
@@ -14,7 +20,7 @@
  */
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import MapView, { Marker, type Region } from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -25,7 +31,15 @@ import {
   type CairnSummary,
 } from '../src/lib/cairnApi';
 import { usePosition } from '../src/lib/usePosition';
-import { colors, space, type } from '../src/theme';
+import { glyphStroke } from '../src/map/accent';
+import CairnMarkerBody, {
+  MARKER_ANCHOR,
+  formatDistance,
+} from '../src/map/CairnMarkerBody';
+import DropButton from '../src/map/DropButton';
+import MapScrim from '../src/map/MapScrim';
+import StatusLine from '../src/map/StatusLine';
+import { colors } from '../src/theme';
 
 /** Technology Park, Ljubljana. Where the demo route lives. */
 const TECHNOLOGY_PARK: Region = {
@@ -73,19 +87,6 @@ function metresBetween(
 }
 
 /**
- * Stone count drives how a cairn reads at a glance — one contribution is a
- * pebble, a dozen is a landmark. Size only; the stacked-stone artwork is gone
- * with Mapbox and is not worth rebuilding before the capture flow works.
- */
-function glyphSize(stoneCount: number): number {
-  if (stoneCount >= 12) return 30;
-  if (stoneCount >= 7) return 26;
-  if (stoneCount >= 4) return 22;
-  if (stoneCount >= 2) return 18;
-  return 14;
-}
-
-/**
  * One cairn on the map.
  *
  * This exists as its own component only to hold `tracksViewChanges`. iOS
@@ -97,40 +98,59 @@ function glyphSize(stoneCount: number): number {
  * for the watcher for one frame instead of for the whole session.
  */
 function CairnMarker({ cairn, onPress }: { cairn: CairnSummary; onPress: () => void }) {
-  const size = glyphSize(cairn.stone_count);
   const [tracks, setTracks] = useState(true);
 
+  const here = cairn.distance_m < cairn.radius_m;
+  const stroke = glyphStroke({
+    spaceId: cairn.space_id,
+    accentHex: cairn.accent_hex,
+    here,
+  });
+
   /**
-   * A refetch can move a cairn into a different size bucket once someone stacks
-   * on it. The frozen snapshot would keep the old glyph, so re-arm — the size
-   * change guarantees onLayout fires again to turn it back off.
+   * Everything the snapshot can show, as one string. A refetch can move a
+   * cairn into a different height bucket once someone stacks on it, change the
+   * distance under it, or walk the user into its radius and turn it amber —
+   * and the frozen bitmap would keep the old one. Re-arm on any of them; the
+   * re-render guarantees onLayout fires again to turn tracking back off, so we
+   * pay for the watcher for a frame rather than for the session.
    */
-  useEffect(() => setTracks(true), [size]);
+  const painted = `${cairn.stone_count}|${formatDistance(
+    cairn.distance_m,
+    cairn.radius_m,
+  )}|${stroke}`;
+  useEffect(() => setTracks(true), [painted]);
 
   return (
     <Marker
       coordinate={{ latitude: cairn.lat, longitude: cairn.lng }}
-      title={cairn.title ?? 'Cairn'}
-      description={`${cairn.stone_count} ${
-        cairn.stone_count === 1 ? 'stone' : 'stones'
-      } · ${cairn.distance_m} m`}
+      /**
+       * A cairn sits on its point, so the anchor is the base of the stack, not
+       * the centre of the marker box.
+       */
+      anchor={MARKER_ANCHOR}
+      /**
+       * No `title`/`description`: those summon Apple's own white callout
+       * bubble, which is the one piece of UI on this screen we cannot style
+       * and would be the only rounded white object in the whole app. The tap
+       * opens the thread, which is where a cairn's title belongs.
+       */
       tracksViewChanges={tracks}
       // The thread screen refetches with its own position, so nothing
       // about the cairn travels in the route but its id.
       onPress={onPress}
+      accessibilityLabel={`${cairn.title ?? 'Cairn'}, ${cairn.stone_count} ${
+        cairn.stone_count === 1 ? 'stone' : 'stones'
+      }, ${here ? 'you are here' : `${cairn.distance_m} metres away`}`}
     >
-      <View
-        onLayout={() => setTracks(false)}
-        style={[
-          styles.glyph,
-          {
-            width: size,
-            height: size,
-            borderRadius: size / 2,
-            backgroundColor: cairn.accent_hex ?? colors.accent,
-          },
-        ]}
-      />
+      <View onLayout={() => setTracks(false)}>
+        <CairnMarkerBody
+          stoneCount={cairn.stone_count}
+          distanceM={cairn.distance_m}
+          radiusM={cairn.radius_m}
+          stroke={stroke}
+        />
+      </View>
     </Marker>
   );
 }
@@ -279,19 +299,16 @@ export default function MapScreen() {
         ))}
       </MapView>
 
+      {/* Seats bone type against tiles we do not control. Behind the overlay,
+          above the map, and deaf to touches so long-press still reaches it. */}
+      <MapScrim />
+
       <SafeAreaView style={styles.overlay} pointerEvents="box-none">
-        <View style={styles.statusBar}>
-          <Text style={styles.status}>{statusLine.toUpperCase()}</Text>
-          {loading ? <ActivityIndicator size="small" color={colors.accent} /> : null}
-        </View>
+        <StatusLine text={statusLine} busy={loading} />
 
         <View style={styles.spacer} pointerEvents="none" />
 
-        <Pressable style={styles.dropButton} onPress={handleDropHere} disabled={!coords}>
-          <Text style={styles.dropLabel}>
-            {coords ? 'LEAVE SOMETHING HERE' : 'WAITING FOR POSITION'}
-          </Text>
-        </Pressable>
+        <DropButton ready={!!coords} onPress={handleDropHere} />
       </SafeAreaView>
 
       {/* The sheet requires a fix — it has nowhere to put the cairn without one.
@@ -315,25 +332,5 @@ export default function MapScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.background },
   overlay: { flex: 1, justifyContent: 'space-between' },
-  statusBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.sm,
-    margin: space.md,
-    paddingHorizontal: space.md,
-    paddingVertical: space.sm,
-    borderRadius: 4,
-    backgroundColor: 'rgba(15, 30, 23, 0.88)',
-  },
-  status: { ...type.mono, color: colors.text, flexShrink: 1 },
   spacer: { flex: 1 },
-  glyph: { borderWidth: 1, borderColor: colors.background },
-  dropButton: {
-    margin: space.md,
-    paddingVertical: space.md,
-    alignItems: 'center',
-    borderRadius: 4,
-    backgroundColor: colors.accent,
-  },
-  dropLabel: { ...type.mono, color: colors.background },
 });

@@ -56,7 +56,22 @@ import {
   uploadStoneAudio,
 } from '../lib/cairnApi';
 import type { PositionCoords } from '../lib/usePosition';
-import { colors, s, type } from '../theme';
+import { alpha, colors, s, type } from '../theme';
+
+/**
+ * A failure, split so it can be *rendered* deliberately rather than dumped.
+ *
+ * `message` is the sentence a walker can act on. `detail` is the machine's own
+ * words — rpc, code, driver message — and it stays on screen on purpose: every
+ * server piece has been verified in isolation, so whatever lands here is the
+ * actual bug and it has to be readable off the phone without a Metro window.
+ * Two fields rather than one string with a blank line in it, because the two
+ * halves are for two different readers and want two different treatments.
+ */
+interface DropFailure {
+  message: string;
+  detail: string | null;
+}
 
 /** CRN-009: single line, and blank is fine. */
 const TITLE_MAX = 60;
@@ -110,7 +125,7 @@ interface LocalStone {
   durationMs: number;
   levels: number[];
   status: 'pending' | 'confirmed' | 'failed';
-  failure: string | null;
+  failure: DropFailure | null;
 }
 
 /** The cairn, once it exists. Non-null means the drop half is done. */
@@ -130,7 +145,7 @@ function formatCoords(coords: PositionCoords): string {
  * A sentence, not a Postgres string. `too-far` is the one a walker can actually
  * fix, so it gets an instruction rather than an apology.
  */
-function describeFailure(err: unknown): string {
+function describeFailure(err: unknown): DropFailure {
   // Always dump the real thing to Metro. A swallowed error costs more time on
   // a build day than an ugly log line ever will.
   console.error('[cairn] drop failed:', err);
@@ -138,46 +153,96 @@ function describeFailure(err: unknown): string {
   if (isCairnApiError(err)) {
     switch (err.kind) {
       case 'too-far':
-        return 'You moved before that landed. Walk back to the cairn and try again.';
+        return {
+          message: 'You moved before that landed. Walk back to the cairn and try again.',
+          detail: null,
+        };
       case 'position-required':
-        return 'Lost your position. Wait for a fix and try again.';
+        return { message: 'Lost your position. Wait for a fix and try again.', detail: null };
       case 'unauthenticated':
-        return 'Signed out. Reopen the app and try again.';
+        return { message: 'Signed out. Reopen the app and try again.', detail: null };
       default:
         // Surface the underlying message rather than hiding it. Every server
         // piece has been verified working in isolation, so whatever lands here
         // is the actual bug and we need to be able to read it off the screen.
-        return `That did not save.\n\n[${err.rpc}${err.code ? ` ${err.code}` : ''}] ${err.message}`;
+        return {
+          message: 'That did not save.',
+          detail: `[${err.rpc}${err.code ? ` ${err.code}` : ''}] ${err.message}`,
+        };
     }
   }
-  const detail =
-    err instanceof Error ? err.message : typeof err === 'string' ? err : JSON.stringify(err);
-  return `That did not save.\n\n${detail}`;
+  return {
+    message: 'That did not save.',
+    detail:
+      err instanceof Error ? err.message : typeof err === 'string' ? err : JSON.stringify(err),
+  };
+}
+
+/**
+ * A failure, rendered as a thing rather than as loose red-adjacent text. It is
+ * the same elevated surface every other card in the app uses — 6% fill, 12%
+ * hairline, no shadow — because a failure is a state the app is in, not damage
+ * to it. The machine's half sits underneath at the metadata rung, which keeps
+ * it legible without letting it outrank the sentence a human can act on.
+ *
+ * Nothing here is terracotta. Terracotta means unresolved *in the world* — an
+ * open pin, a stone that never landed — and general error text is precisely
+ * where the design system says it is never spent.
+ */
+function Failure({ failure }: { failure: DropFailure }) {
+  return (
+    <View style={styles.failure} accessibilityRole="alert">
+      <Text style={styles.failureMessage}>{failure.message}</Text>
+      {failure.detail ? <Text style={styles.failureDetail}>{failure.detail}</Text> : null}
+    </View>
+  );
 }
 
 // --- Waveform ---------------------------------------------------------------
 
-const WAVE_BARS = 28;
-const WAVE_MIN_H = 3;
-const WAVE_MAX_H = 20;
+/**
+ * Geometry straight out of reference/design-system.md, and none of it is
+ * negotiable: 24 columns, 3pt wide, 3pt apart, 1–6 stones each, stone 4pt tall
+ * with a 2pt gap, 2pt corner radius.
+ *
+ * This is the same form the thread draws for a stone that came off the server —
+ * the difference is only where the numbers came from. In the thread they are
+ * synthesised from the stone id, because the schema has nowhere to keep
+ * amplitudes; here the recording is still in memory, so these twenty-four
+ * columns are the take that was actually just spoken. Identical geometry on
+ * purpose: a stone must not change shape when it crosses from this sheet into
+ * the thread.
+ */
+const WAVE_COLUMNS = 24;
+const COLUMN_W = 3;
+const COLUMN_GAP = 3;
+const WAVE_STONE_H = 4;
+const WAVE_STONE_GAP = 2;
+const WAVE_STONES_MAX = 6;
+const WAVE_TRACK_H = WAVE_STONES_MAX * WAVE_STONE_H + (WAVE_STONES_MAX - 1) * WAVE_STONE_GAP;
 
 /**
- * Downsample to a fixed bar count by PEAK, not mean. Speech averaged over a
- * bucket is a flat line — the peaks are the syllables, and the syllables are
- * the only thing that makes one recording look unlike another.
+ * Downsample to a fixed column count by PEAK, not mean, then quantise to a
+ * stone count. Speech averaged over a bucket is a flat line — the peaks are the
+ * syllables, and the syllables are the only thing that makes one recording look
+ * unlike another.
+ *
+ * Every column gets at least one stone. A silent take then reads as a low even
+ * course of stones — "there is audio here and it is quiet" — where an empty row
+ * would read as a rendering bug.
  */
-function waveShape(levels: number[]): number[] {
-  if (levels.length === 0) return [];
-  const bucket = levels.length / WAVE_BARS;
+function waveStacks(levels: number[]): number[] {
+  if (levels.length === 0) return Array<number>(WAVE_COLUMNS).fill(1);
+  const bucket = levels.length / WAVE_COLUMNS;
   const out: number[] = [];
-  for (let i = 0; i < WAVE_BARS; i += 1) {
+  for (let i = 0; i < WAVE_COLUMNS; i += 1) {
     const start = Math.floor(i * bucket);
     const end = Math.max(start + 1, Math.floor((i + 1) * bucket));
     let peak = 0;
     for (let j = start; j < end && j < levels.length; j += 1) {
       if (levels[j] > peak) peak = levels[j];
     }
-    out.push(WAVE_MIN_H + peak * (WAVE_MAX_H - WAVE_MIN_H));
+    out.push(1 + Math.round(peak * (WAVE_STONES_MAX - 1)));
   }
   return out;
 }
@@ -195,20 +260,19 @@ function tintFor(status: LocalStone['status']): string {
 }
 
 function Waveform({ levels, status }: { levels: number[]; status: LocalStone['status'] }) {
-  const bars = waveShape(levels);
+  const stacks = waveStacks(levels);
   const tint = tintFor(status);
-
-  // A take with no samples above the floor has no peaks to draw. A bare
-  // baseline reads as "there is audio here and it is quiet"; an empty row reads
-  // as a rendering bug.
-  if (bars.length === 0) {
-    return <View style={[styles.waveEmpty, { backgroundColor: tint }]} />;
-  }
 
   return (
     <View style={styles.wave}>
-      {bars.map((h, i) => (
-        <View key={i} style={[styles.waveBar, { height: h, backgroundColor: tint }]} />
+      {stacks.map((count, column) => (
+        // Index keys are correct here: the array is fixed-length, positional,
+        // and never reordered or spliced.
+        <View key={column} style={styles.waveColumn}>
+          {Array.from({ length: count }, (_, stone) => (
+            <View key={stone} style={[styles.waveStone, { backgroundColor: tint }]} />
+          ))}
+        </View>
       ))}
     </View>
   );
@@ -227,7 +291,7 @@ export function DropCairnSheet({
   const [session, setSession] = useState<DropSession | null>(null);
   const [stones, setStones] = useState<LocalStone[]>([]);
   const [dropping, setDropping] = useState(false);
-  const [dropError, setDropError] = useState<string | null>(null);
+  const [dropError, setDropError] = useState<DropFailure | null>(null);
 
   /**
    * Live position, read at send time rather than closed over. The watch keeps
@@ -413,7 +477,12 @@ export function DropCairnSheet({
   return (
     <Modal visible={open} transparent animationType="slide" onRequestClose={dismiss}>
       <View style={styles.scrim}>
-        <Pressable style={styles.scrimTap} onPress={dismiss} accessibilityLabel="Dismiss" />
+        <Pressable
+          style={styles.scrimTap}
+          onPress={dismiss}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss"
+        />
 
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.sheet}>
@@ -427,24 +496,36 @@ export function DropCairnSheet({
               <Text style={styles.heading}>
                 {dropped ? (session?.title ?? 'Your cairn') : 'Leave something here'}
               </Text>
-              <Text style={styles.meta}>
-                {destination.label} — {formatCoords(coords)}
-              </Text>
+              {/* Two mono lines, not one run-on: where it is going, then where
+                  it is. The coordinates are the field-journal detail and they
+                  earn their own line — tabular figures, five decimals, ~1m. */}
+              <Text style={styles.meta}>{destination.label}</Text>
+              <Text style={styles.coords}>{formatCoords(coords)}</Text>
 
               {!dropped ? (
                 <>
-                  <TextInput
-                    style={styles.titleField}
-                    value={title}
-                    onChangeText={setTitle}
-                    placeholder="Title (optional)"
-                    placeholderTextColor={colors.textFaint}
-                    maxLength={TITLE_MAX}
-                    returnKeyType="done"
-                    autoCapitalize="sentences"
-                    autoCorrect={false}
-                    editable={!dropping}
-                  />
+                  {/*
+                    A label, not a form field. Printed caption, writing area,
+                    stock underneath — the 6% elevated surface every card in the
+                    app uses. No box outline: an outlined input in the middle of
+                    a field tool reads as a settings screen.
+                  */}
+                  <View style={styles.label}>
+                    <Text style={styles.labelCaption}>Title — optional</Text>
+                    <TextInput
+                      style={styles.titleField}
+                      value={title}
+                      onChangeText={setTitle}
+                      placeholder="Name the place"
+                      placeholderTextColor={colors.textFaint}
+                      maxLength={TITLE_MAX}
+                      returnKeyType="done"
+                      autoCapitalize="sentences"
+                      autoCorrect={false}
+                      editable={!dropping}
+                      accessibilityLabel="Title, optional"
+                    />
+                  </View>
                   {/* The title is the only thing visible from across the map, to
                       anyone who can see the cairn at all. The payload goes in the
                       stone, which is gated by standing here. */}
@@ -454,19 +535,24 @@ export function DropCairnSheet({
                     March”.
                   </Text>
 
-                  {dropError ? <Text style={styles.failure}>{dropError}</Text> : null}
+                  {dropError ? <Failure failure={dropError} /> : null}
 
                   <Pressable
                     style={[styles.primary, dropping && styles.primaryOff]}
                     disabled={dropping}
                     onPress={() => void drop()}
+                    accessibilityRole="button"
+                    accessibilityState={{ disabled: dropping, busy: dropping }}
+                    accessibilityLabel={dropping ? 'Dropping' : 'Drop'}
                   >
-                    {/* No spinner. The label carries the state. */}
-                    <Text style={styles.primaryLabel}>{dropping ? 'Dropping…' : 'Drop'}</Text>
+                    {/* No spinner. The label carries the state — and it is the
+                        same word in the same place, so the button does not
+                        change size under the thumb that just pressed it. */}
+                    <Text style={styles.primaryLabel}>{dropping ? 'Dropping' : 'Drop'}</Text>
                   </Pressable>
 
                   <View style={styles.footer}>
-                    <Pressable onPress={dismiss} hitSlop={s.unit}>
+                    <Pressable onPress={dismiss} hitSlop={s.unit} accessibilityRole="button">
                       <Text style={styles.quiet}>Cancel</Text>
                     </Pressable>
                   </View>
@@ -495,7 +581,12 @@ export function DropCairnSheet({
                             {(stone.durationMs / 1000).toFixed(1)}s
                           </Text>
                           {stone.status === 'failed' ? (
-                            <Pressable onPress={() => retryStone(stone)} hitSlop={s.unit}>
+                            <Pressable
+                              onPress={() => retryStone(stone)}
+                              hitSlop={s.unit * 2}
+                              accessibilityRole="button"
+                              accessibilityLabel="Retry sending this stone"
+                            >
                               <Text style={styles.retry}>Retry</Text>
                             </Pressable>
                           ) : (
@@ -506,9 +597,7 @@ export function DropCairnSheet({
                         </View>
                         {/* The stone stays visible when it fails. It exists on
                             this phone whether or not the server has heard of it. */}
-                        {stone.failure ? (
-                          <Text style={styles.stoneFailure}>{stone.failure}</Text>
-                        ) : null}
+                        {stone.failure ? <Failure failure={stone.failure} /> : null}
                       </View>
                     ))}
                   </View>
@@ -524,7 +613,7 @@ export function DropCairnSheet({
                   </View>
 
                   <View style={styles.footer}>
-                    <Pressable onPress={dismiss} hitSlop={s.unit}>
+                    <Pressable onPress={dismiss} hitSlop={s.unit} accessibilityRole="button">
                       <Text style={styles.quiet}>Done</Text>
                     </Pressable>
                   </View>
@@ -541,13 +630,13 @@ export function DropCairnSheet({
 export default DropCairnSheet;
 
 const styles = StyleSheet.create({
-  scrim: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(15, 30, 23, 0.72)' },
+  scrim: { flex: 1, justifyContent: 'flex-end', backgroundColor: colors.scrim },
   scrimTap: { flex: 1 },
   sheet: {
     backgroundColor: colors.background,
     borderTopLeftRadius: s.r.sheet,
     borderTopRightRadius: s.r.sheet,
-    borderTopWidth: 1,
+    borderTopWidth: s.hairline,
     borderColor: colors.hairline,
     paddingBottom: s.unit * 5,
   },
@@ -568,19 +657,37 @@ const styles = StyleSheet.create({
    * separates the heading from the field it sits above, not size.
    */
   heading: { ...type.body, fontWeight: '500', color: colors.text },
-  meta: { ...type.mono, color: colors.textFaint, marginBottom: s.unit * 3 },
+  meta: { ...type.mono, color: colors.textFaint, marginTop: s.unit },
+  coords: { ...type.mono, color: colors.textFaint, marginBottom: s.unit * 3 },
+
+  // The label. Stock, printed caption, writing area — 20pt of padding so there
+  // is room to write in it, which is the whole difference between a label and
+  // an input.
+  label: {
+    marginTop: s.unit,
+    paddingHorizontal: s.pad,
+    paddingTop: s.unit * 2,
+    paddingBottom: s.unit,
+    borderRadius: s.r.chip,
+    backgroundColor: colors.surface,
+  },
+  labelCaption: { ...type.mono, color: colors.textFaint },
   titleField: {
     ...type.body,
     color: colors.text,
-    paddingVertical: s.unit * 1.5,
-    borderBottomWidth: 1,
-    borderColor: colors.hairline,
+    // Enough height to be a writing area rather than a line, and comfortably
+    // past the 44pt floor for the tap that focuses it.
+    minHeight: s.tap,
+    paddingTop: s.unit,
+    paddingBottom: 0,
   },
   hint: {
     ...type.small,
-    color: colors.textFaint,
+    // Support, not metadata: this sentence is the one that stops the payload
+    // going in the title, and it has to survive being read outdoors.
+    color: colors.textMuted,
     maxWidth: s.measure * 8,
-    marginTop: s.unit,
+    marginTop: s.unit * 2,
   },
   count: { ...type.mono, color: colors.textFaint },
 
@@ -592,26 +699,41 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: s.r.chip,
-    borderWidth: 1,
+    borderWidth: s.hairline,
     borderColor: colors.contour,
     backgroundColor: 'transparent',
   },
-  // Dimmed, not hidden: the button has to stay where the thumb expects it.
-  primaryOff: { opacity: 0.35 },
+  /**
+   * Saving. Dimmed to the support rung, not hidden and not replaced — the
+   * button stays exactly where the thumb left it, at exactly the same size,
+   * and only its weight changes. That is what makes an in-flight drop read as
+   * calm rather than as something having gone wrong.
+   */
+  primaryOff: { opacity: alpha.meta, borderColor: colors.t40 },
   primaryLabel: { ...type.mono, color: colors.contour },
 
   thread: { marginTop: s.unit * 3, gap: s.thread },
   stone: { gap: s.unit },
-  wave: { flexDirection: 'row', alignItems: 'flex-end', gap: 2, height: WAVE_MAX_H },
-  waveBar: { width: 3, borderRadius: s.r.stone },
-  waveEmpty: { height: WAVE_MIN_H, width: WAVE_BARS * 5, borderRadius: s.r.stone },
+  wave: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: COLUMN_GAP,
+    height: WAVE_TRACK_H,
+  },
+  waveColumn: {
+    // Bottom-up, because a stack grows off the ground rather than hanging from
+    // the top of the row.
+    flexDirection: 'column-reverse',
+    width: COLUMN_W,
+    gap: WAVE_STONE_GAP,
+  },
+  waveStone: { width: COLUMN_W, height: WAVE_STONE_H, borderRadius: s.r.stone },
   stoneFoot: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   stoneMeta: { ...type.mono, color: colors.textFaint },
   // Terracotta earns its place on the stone itself — that is the unresolved
   // state CRN-011 specifies. The sentence underneath stays on the bone ladder,
   // because general error text is the one thing terracotta is never for.
   retry: { ...type.mono, color: colors.unresolved },
-  stoneFailure: { ...type.small, color: colors.textMuted, maxWidth: s.measure * 8 },
 
   recorder: { marginTop: s.unit * 4 },
   footer: {
@@ -621,10 +743,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   quiet: { ...type.mono, color: colors.textFaint, paddingVertical: s.unit },
+
   failure: {
-    ...type.small,
-    color: colors.textMuted,
-    maxWidth: s.measure * 8,
     marginTop: s.unit * 2,
+    padding: s.unit * 2,
+    gap: s.unit,
+    borderRadius: s.r.chip,
+    borderWidth: s.hairline,
+    borderColor: colors.hairline,
+    backgroundColor: colors.surface,
   },
+  failureMessage: { ...type.small, color: colors.textMuted, maxWidth: s.measure * 8 },
+  /**
+   * The machine's half. Metadata rung, so it is legible without competing with
+   * the sentence above it — and deliberately not mono, because `type.mono`
+   * uppercases and an uppercased Postgres message is harder to read than the
+   * bug it describes.
+   */
+  failureDetail: { ...type.small, color: colors.textFaint, maxWidth: s.measure * 8 },
 });

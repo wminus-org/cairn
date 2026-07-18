@@ -14,8 +14,8 @@
  * node_modules/expo-audio/build rather than remembered: useAudioRecorder ->
  * prepareToRecordAsync() -> record() -> stop(), status via getStatus().
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 import {
   RecordingPresets,
   getRecordingPermissionsAsync,
@@ -26,7 +26,7 @@ import {
 } from 'expo-audio';
 import { File } from 'expo-file-system';
 
-import { colors, palette, s, type } from '../theme';
+import { alpha, colors, motion, palette, s, type } from '../theme';
 
 /** Hard cap. The recorder stops itself here as if the finger had lifted. */
 const MAX_MS = 60_000;
@@ -83,6 +83,20 @@ const MAX_STONES = 40;
 const WAVE_H = MAX_STONES * (STONE_H + STONE_GAP) + STONE_GAP;
 
 /**
+ * The ground the cairn is built on, and the width the sixty-second fill runs
+ * across. Wider than the widest stone (34pt) by enough that the column always
+ * reads as sitting *on* something rather than balanced on a line its own size.
+ */
+const GROUND_W = 120;
+
+/**
+ * 72pt: the 44pt minimum tap target plus enough ring that a thumb resting on it
+ * does not cover the whole control. The hit target is the button itself, so
+ * there is no hitSlop to keep in sync.
+ */
+const BUTTON_D = 72;
+
+/**
  * Fixed jitter table, in points — deterministic, so a stone never twitches on
  * re-render. It offsets the stone sideways and never scales it: width is the
  * only thing carrying amplitude, and jitter in the width is exactly how a
@@ -90,27 +104,107 @@ const WAVE_H = MAX_STONES * (STONE_H + STONE_GAP) + STONE_GAP;
  */
 const JITTER = [0, 2, -1, 2, -2, 1, -2, 1];
 
+/**
+ * The second half of the irregularity, and the half that gives a stone weight:
+ * a fraction of a degree of tilt, seeded off the same seq so it is as stable as
+ * the jitter. At two degrees on a 5pt slab the corner lifts about half a point —
+ * you do not read it as rotation, you read it as a stone that did not land flat.
+ * Coprime with JITTER's length on purpose, so tilt and offset do not fall into a
+ * visible eight-stone repeat.
+ */
+const TILT = [0, -1.6, 0.9, 2, -0.7, 1.4, -2, 0.5, 1.1, -1.2, 1.8, -0.4, 0.7];
+
 function stoneWidth(level: number): number {
   const w = STONE_W_MIN + level * (STONE_W_MAX - STONE_W_MIN);
   return Math.round(w < STONE_W_MIN ? STONE_W_MIN : w > STONE_W_MAX ? STONE_W_MAX : w);
 }
 
-type Stone = { seq: number; w: number; dx: number };
+type Stone = { seq: number; w: number; dx: number; rot: number };
 
 /**
  * At the cap, fold the stack in half: each pair becomes one stone at their mean
  * width. Keys survive because the merged stone inherits the older seq, and
- * every seq in the column is still distinct.
+ * every seq in the column is still distinct. The merged stone keeps the older
+ * stone's offset and tilt rather than averaging them — a stone that settles has
+ * a pose, and averaging two poses walks the whole column toward straight every
+ * time the stack folds.
  */
 function mergePairs(stones: Stone[]): Stone[] {
   const merged: Stone[] = [];
   for (let i = 0; i < stones.length; i += 2) {
     const a = stones[i];
     const b = stones[i + 1] ?? a;
-    merged.push({ seq: a.seq, w: Math.round((a.w + b.w) / 2), dx: a.dx });
+    merged.push({ seq: a.seq, w: Math.round((a.w + b.w) / 2), dx: a.dx, rot: a.rot });
   }
   return merged;
 }
+
+/**
+ * One stone, landing.
+ *
+ * It arrives from above — one stone-pitch up, translucent and narrow — and
+ * settles into its place and its full width over 200ms ease-out. That is the
+ * whole animation: no spring, no bounce, no overshoot. A stone set down by hand
+ * decelerates and stops.
+ *
+ * `memo` matters more than it looks. The parent re-renders every 90ms while the
+ * mic is open, and the entry animation is keyed to mount — so re-rendering a
+ * settled stone is not just wasted work, it is the thing that would make the
+ * whole column twitch. The props are all primitives, and `tint` is a constant
+ * string for the first 55 seconds, so in practice a settled stone renders once.
+ */
+const FallingStone = memo(function FallingStone({
+  w,
+  dx,
+  rot,
+  tint,
+}: {
+  w: number;
+  dx: number;
+  rot: number;
+  tint: string;
+}) {
+  const land = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(land, {
+      toValue: 1,
+      duration: motion.state,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [land]);
+
+  return (
+    <Animated.View
+      style={[
+        styles.stone,
+        {
+          width: w,
+          backgroundColor: tint,
+          opacity: land,
+          transform: [
+            // Jitter as an offset on a fixed-width stone: the column edge is
+            // what wanders, not the stone's weight.
+            { translateX: dx },
+            {
+              translateY: land.interpolate({
+                inputRange: [0, 1],
+                outputRange: [-(STONE_H + STONE_GAP), 0],
+              }),
+            },
+            // Narrow on the way down, full width once it is bearing load. Only
+            // scaleX — a stone that squashed vertically would be rubber.
+            {
+              scaleX: land.interpolate({ inputRange: [0, 1], outputRange: [0.72, 1] }),
+            },
+            { rotate: `${rot}deg` },
+          ],
+        },
+      ]}
+    />
+  );
+});
 
 /** The column tints toward terracotta over the last five seconds. */
 const TINT_FROM_MS = 55_000;
@@ -122,6 +216,13 @@ function channels(hex: string): [number, number, number] {
 }
 const AMBER = channels(palette.amber);
 const TERRACOTTA = channels(palette.terracotta);
+const BONE = channels(palette.bone);
+
+/** 0 until the last five seconds, then 0 → 1 across them. */
+function tintK(elapsedMs: number): number {
+  const raw = (elapsedMs - TINT_FROM_MS) / (MAX_MS - TINT_FROM_MS);
+  return raw < 0 ? 0 : raw > 1 ? 1 : raw;
+}
 
 /**
  * The same information as the countdown, in the place the eye already is. It
@@ -129,11 +230,28 @@ const TERRACOTTA = channels(palette.terracotta);
  * gradient into the stones and not a line of red copy.
  */
 function stoneColor(elapsedMs: number): string {
-  const raw = (elapsedMs - TINT_FROM_MS) / (MAX_MS - TINT_FROM_MS);
-  const k = raw < 0 ? 0 : raw > 1 ? 1 : raw;
+  const k = tintK(elapsedMs);
   if (k === 0) return palette.amber;
   const [r, g, b] = AMBER.map((c, i) => Math.round(c + (TERRACOTTA[i] - c) * k));
   return `rgb(${r}, ${g}, ${b})`;
+}
+
+/**
+ * The ground line under the stack doubles as the take running out: it fills
+ * left to right across the sixty seconds, so the cap is visible from the first
+ * second instead of arriving as a countdown at the end.
+ *
+ * It is bone at 40% — the metadata rung — not amber, because amber means the
+ * mic is live and it is already spent on the stones. Over the last five seconds
+ * it walks to terracotta on exactly the same curve the stones do: one signal
+ * said twice, in the two places the eye already is.
+ */
+function groundColor(elapsedMs: number): string {
+  const k = tintK(elapsedMs);
+  if (k === 0) return colors.t40;
+  const [r, g, b] = BONE.map((c, i) => Math.round(c + (TERRACOTTA[i] - c) * k));
+  const a = (alpha.meta + (alpha.full - alpha.meta) * k).toFixed(2);
+  return `rgba(${r}, ${g}, ${b}, ${a})`;
 }
 
 /**
@@ -412,6 +530,7 @@ export function HoldToRecord({ onComplete, onCancel, onDismiss }: HoldToRecordPr
           seq,
           w: stoneWidth(level),
           dx: JITTER[seq % JITTER.length],
+          rot: TILT[seq % TILT.length],
         };
         setStones((prev) => [...(prev.length >= MAX_STONES ? mergePairs(prev) : prev), stone]);
       }
@@ -458,6 +577,57 @@ export function HoldToRecord({ onComplete, onCancel, onDismiss }: HoldToRecordPr
     };
   }, [clearTimer, readPhase, recorder]);
 
+  /**
+   * How held the control is: 0 idle, 1 armed or recording. Drives the ring and
+   * the core through one value so the button reads as a single object being
+   * pressed rather than three properties changing at once.
+   */
+  const hold = useRef(new Animated.Value(0)).current;
+  const held = phase === 'arming' || phase === 'recording';
+  useEffect(() => {
+    Animated.timing(hold, {
+      toValue: held ? 1 : 0,
+      duration: motion.state,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [held, hold]);
+
+  /**
+   * Setting it down. On release the column loses its weight and fades over one
+   * state duration — the finish path is async, so `stopping` is on screen long
+   * enough to see. It is deliberately not a dismissal: the stack sinks two
+   * points, the way a hand lets go of something rather than throwing it.
+   */
+  const settle = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (phase === 'stopping') {
+      Animated.timing(settle, {
+        toValue: 0,
+        duration: motion.state,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+    } else if (phase === 'idle') {
+      // Nothing is drawn at idle, so this is invisible — it just re-arms the
+      // value for the next take. Stop first: a hold started before the previous
+      // settle finished would otherwise inherit an animation still running to
+      // zero, and the new column would fade out as it was being built.
+      settle.stopAnimation();
+      settle.setValue(1);
+    }
+  }, [phase, settle]);
+
+  /**
+   * How much of the sixty seconds is gone, 0–1, pushed straight onto the ground
+   * line. Set rather than animated: `elapsedMs` already ticks at the metering
+   * cadence, which is smoother than any duration worth animating over.
+   */
+  const capacity = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    capacity.setValue(Math.min(1, elapsedMs / MAX_MS));
+  }, [capacity, elapsedMs]);
+
   if (permission === 'denied') {
     return (
       <View style={styles.root}>
@@ -469,6 +639,8 @@ export function HoldToRecord({ onComplete, onCancel, onDismiss }: HoldToRecordPr
           </Text>
           <Pressable
             style={styles.deniedAction}
+            accessibilityRole="button"
+            accessibilityLabel="Not now"
             onPress={() => {
               // AC6 wants a clean return, not a dead end. Clear the panel here
               // rather than only telling the caller, so the control is back in
@@ -479,7 +651,9 @@ export function HoldToRecord({ onComplete, onCancel, onDismiss }: HoldToRecordPr
               onDismiss?.();
             }}
           >
-            <Text style={styles.deniedActionLabel}>NOT NOW</Text>
+            {/* Sentence case in source. `type.mono` uppercases — hand-shouting
+                it here is how the letterspacing ends up applied twice. */}
+            <Text style={styles.deniedActionLabel}>Not now</Text>
           </Pressable>
         </View>
       </View>
@@ -491,53 +665,101 @@ export function HoldToRecord({ onComplete, onCancel, onDismiss }: HoldToRecordPr
   const showCountdown = recording && remainingMs <= COUNTDOWN_FROM_MS;
   const tint = stoneColor(elapsedMs);
 
+  // Sentence case: `type.mono` uppercases. Four states, four different words —
+  // the state is never carried by colour alone.
+  const label = showCountdown
+    ? `${Math.ceil(remainingMs / 1000)}s left`
+    : recording
+      ? `${(elapsedMs / 1000).toFixed(1)}s`
+      : phase === 'arming'
+        ? 'One moment'
+        : phase === 'stopping'
+          ? 'Setting it down'
+          : 'Hold to speak';
+
   return (
     <View style={styles.root}>
       <View style={styles.wave}>
         {/* Newest stone sits at the bottom of the DOM order and the top of the
             pile, so column-reverse does the stacking without index maths. */}
-        <View style={styles.stack}>
+        <Animated.View
+          style={[
+            styles.stack,
+            {
+              opacity: settle,
+              transform: [
+                { translateY: settle.interpolate({ inputRange: [0, 1], outputRange: [2, 0] }) },
+              ],
+            },
+          ]}
+        >
           {stones.map((stone) => (
-            <View
+            // One colour for the whole column. The old fade on the oldest
+            // stones was telling you they were about to scroll away, and
+            // nothing scrolls away any more — they merge in place.
+            <FallingStone
               key={stone.seq}
-              style={[
-                styles.stone,
-                {
-                  width: stone.w,
-                  // Jitter as an offset on a fixed-width stone: the column edge
-                  // is what wanders, not the stone's weight.
-                  transform: [{ translateX: stone.dx }],
-                  // One colour for the whole column. The old fade on the oldest
-                  // stones was telling you they were about to scroll away, and
-                  // nothing scrolls away any more — they merge in place.
-                  backgroundColor: tint,
-                },
-              ]}
+              w={stone.w}
+              dx={stone.dx}
+              rot={stone.rot}
+              tint={tint}
             />
           ))}
+        </Animated.View>
+
+        {/* Ground. The hairline is where the cairn sits; the fill inside it is
+            the sixty seconds going. Scaled about its left edge with a matching
+            translate, so it grows on the native driver and never lays out. */}
+        <View style={styles.ground}>
+          <Animated.View
+            style={[
+              styles.groundFill,
+              {
+                backgroundColor: groundColor(elapsedMs),
+                transform: [
+                  {
+                    translateX: capacity.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [-GROUND_W / 2, 0],
+                    }),
+                  },
+                  { scaleX: capacity },
+                ],
+              },
+            ]}
+          />
         </View>
-        <View style={styles.baseline} />
       </View>
 
-      <Text style={styles.meta}>
-        {showCountdown
-          ? `${Math.ceil(remainingMs / 1000)}S LEFT`
-          : recording
-            ? `${(elapsedMs / 1000).toFixed(1)}S`
-            : phase === 'arming'
-              ? 'ONE MOMENT'
-              : 'HOLD TO SPEAK'}
-      </Text>
+      <Text style={styles.meta}>{label}</Text>
 
       <Pressable
         onPressIn={() => void begin()}
         onPressOut={release}
-        style={({ pressed }) => [
-          styles.button,
-          (pressed || recording) && styles.buttonHeld,
-        ]}
+        accessibilityRole="button"
+        accessibilityLabel="Hold to speak"
+        accessibilityHint="Press and hold to record a voice stone. Release to keep it."
+        accessibilityState={{ busy: held }}
+        style={[styles.button, held && styles.buttonHeld]}
       >
-        <View style={[styles.dot, recording && styles.dotLive]} />
+        {/*
+          The core. It contracts under the thumb and goes amber the moment the
+          mic is actually open — the one place in this control amber is spent,
+          and it is spent on "live", not on chrome. Shape carries the same
+          message as the colour: armed is smaller than idle, live is smaller
+          still and hard-edged, so the state survives a sunlit screen.
+        */}
+        <Animated.View
+          style={[
+            styles.core,
+            recording && styles.coreLive,
+            {
+              transform: [
+                { scale: hold.interpolate({ inputRange: [0, 1], outputRange: [1, 0.78] }) },
+              ],
+            },
+          ]}
+        />
       </Pressable>
     </View>
   );
@@ -553,36 +775,53 @@ const styles = StyleSheet.create({
     borderRadius: s.r.stone,
     backgroundColor: colors.accent,
   },
-  baseline: {
+
+  ground: {
     marginTop: STONE_GAP,
-    width: 120,
-    height: 1,
+    width: GROUND_W,
+    height: s.hairline,
     backgroundColor: colors.t12,
   },
+  groundFill: { position: 'absolute', left: 0, top: 0, width: GROUND_W, height: s.hairline },
 
   meta: { ...type.mono, color: colors.textFaint },
 
   button: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
+    width: BUTTON_D,
+    height: BUTTON_D,
+    borderRadius: BUTTON_D / 2,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
+    borderWidth: s.hairline,
     borderColor: colors.t20,
     backgroundColor: colors.surface,
   },
   // Contour-on-base, per the rule that primary buttons are never amber fills.
-  // Amber in here is a signal, not chrome — it is spent on the live dot and the
-  // stones, and a button that borrows it spends the proximity payoff.
+  // Amber in here is a signal, not chrome — it is spent on the live core and
+  // the stones, and a button that borrows it spends the proximity payoff.
   buttonHeld: { borderColor: colors.contour, backgroundColor: colors.t12 },
-  dot: { width: 20, height: 20, borderRadius: 10, backgroundColor: colors.t40 },
-  dotLive: { backgroundColor: colors.accent },
+  /** Idle and armed: a round pebble at the metadata rung. */
+  core: { width: 20, height: 20, borderRadius: 10, backgroundColor: colors.t40 },
+  /**
+   * Live: the pebble becomes a stone. Same 2pt radius as every stone in the
+   * column above it, amber because the mic is open. Colour and shape both
+   * change, so the state is not carried by colour alone.
+   */
+  coreLive: { borderRadius: s.r.stone, backgroundColor: colors.accent },
 
   denied: { paddingHorizontal: s.pad, gap: s.unit * 2, alignItems: 'flex-start' },
   deniedTitle: { ...type.body, color: colors.text },
-  deniedBody: { ...type.small, color: colors.textMuted, maxWidth: 320 },
-  deniedAction: { paddingVertical: s.unit, paddingHorizontal: s.unit * 2, borderRadius: s.r.chip, backgroundColor: colors.surface },
+  deniedBody: { ...type.small, color: colors.textMuted, maxWidth: s.measure * 5 },
+  deniedAction: {
+    minHeight: s.tap,
+    minWidth: s.tap * 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: s.unit * 2,
+    borderRadius: s.r.chip,
+    borderWidth: s.hairline,
+    borderColor: colors.contour,
+  },
   deniedActionLabel: { ...type.mono, color: colors.text },
 });
 
